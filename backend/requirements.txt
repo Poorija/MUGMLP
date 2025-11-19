@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+pandas
+openpyxl
+scikit-learn
+torch
+torchvision
+captcha
+xgboost
+matplotlib
+seaborn
