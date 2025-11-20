@@ -1,19 +1,26 @@
 import pandas as pd
 import joblib
 import json
+import asyncio
 from sqlalchemy.orm import Session
 from .database import SessionLocal
 from . import crud
+from .websocket_manager import manager
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.linear_model import LinearRegression
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.svm import SVR
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, silhouette_score
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, silhouette_score,
+    mean_squared_error, r2_score, mean_absolute_error
+)
 import xgboost as xgb
 
 # PyTorch
@@ -32,6 +39,14 @@ TASK_REGISTRY = {
         "XGBClassifier": xgb.XGBClassifier,
         "SimpleNN": "pytorch", # Special key for PyTorch models
     },
+    "regression": {
+        "LinearRegression": LinearRegression,
+        "DecisionTreeRegressor": DecisionTreeRegressor,
+        "RandomForestRegressor": RandomForestRegressor,
+        "XGBRegressor": xgb.XGBRegressor,
+        "SVR": SVR,
+        "SimpleNN": "pytorch"
+    },
     "clustering": {
         "KMeans": KMeans,
         "DBSCAN": DBSCAN,
@@ -41,13 +56,116 @@ TASK_REGISTRY = {
     }
 }
 
-# --- PyTorch Implementation (remains the same) ---
+# --- PyTorch Implementation ---
 class SimpleNN(nn.Module):
-    # ... (code from previous step)
-    pass
-def train_pytorch_model(df, target_column, model_params, model_id):
-    # ... (code from previous step)
-    pass
+    def __init__(self, input_dim, hidden_layers, output_dim, task_type="classification"):
+        super(SimpleNN, self).__init__()
+        layers = []
+        in_dim = input_dim
+        for h_dim in hidden_layers:
+            layers.append(nn.Linear(in_dim, h_dim))
+            layers.append(nn.ReLU())
+            in_dim = h_dim
+        layers.append(nn.Linear(in_dim, output_dim))
+
+        if task_type == "classification":
+            # For classification (multi-class), we usually use CrossEntropyLoss which takes logits
+            # but we can apply Softmax for inference. The output here is logits.
+            pass
+        elif task_type == "regression":
+            # For regression, usually linear output
+            pass
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
+
+def train_pytorch_model(df, target_column, model_params, model_id, task_type="classification"):
+    input_dim = df.shape[1] - 1 # Exclude target
+
+    if task_type == "classification":
+        output_dim = len(df[target_column].unique())
+        criterion = nn.CrossEntropyLoss()
+    else: # Regression
+        output_dim = 1
+        criterion = nn.MSELoss()
+
+    hidden_layers = [int(x) for x in str(model_params.get('hidden_layers', '64,32')).split(',')]
+    epochs = int(model_params.get('epochs', 10))
+    lr = float(model_params.get('learning_rate', 0.001))
+
+    model = SimpleNN(input_dim, hidden_layers, output_dim, task_type)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    # Data Prep
+    X = df.drop(columns=[target_column]).select_dtypes(include=['number']).values
+    y = df[target_column].values
+
+    if task_type == "classification":
+        le = LabelEncoder()
+        y = le.fit_transform(y)
+        X_tensor = torch.tensor(X, dtype=torch.float32)
+        y_tensor = torch.tensor(y, dtype=torch.long)
+    else:
+        X_tensor = torch.tensor(X, dtype=torch.float32)
+        y_tensor = torch.tensor(y, dtype=torch.float32).view(-1, 1)
+
+    dataset = TensorDataset(X_tensor, y_tensor)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    model.train()
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for i, data in enumerate(dataloader, 0):
+            inputs, labels = data
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+
+        # Broadcast progress
+        progress_msg = json.dumps({
+            "model_id": model_id,
+            "status": "running",
+            "epoch": epoch + 1,
+            "total_epochs": epochs,
+            "loss": running_loss / len(dataloader)
+        })
+        # In a real async setup, we would await this.
+        # Since this function is called from a synchronous background task wrapper,
+        # we can't easily await. But we can use asyncio.run or run_coroutine_threadsafe if loop is available.
+        # For simplicity, we will try to use the manager's broadcast in a fire-and-forget manner or wrapped.
+        # Given FastAPI BackgroundTasks runs in a threadpool, we can't directly await.
+        # We'll use a sync wrapper for broadcast if possible, or just skip for now in this context
+        # but better to support it.
+        try:
+             loop = asyncio.new_event_loop()
+             asyncio.set_event_loop(loop)
+             loop.run_until_complete(manager.broadcast(progress_msg))
+             loop.close()
+        except Exception as e:
+             print(f"Failed to broadcast progress: {e}")
+
+
+    # Evaluation
+    model.eval()
+    with torch.no_grad():
+        if task_type == "classification":
+            outputs = model(X_tensor)
+            _, predicted = torch.max(outputs.data, 1)
+            acc = (predicted == y_tensor).sum().item() / len(y_tensor)
+            metrics = {"accuracy": acc}
+        else:
+            outputs = model(X_tensor)
+            mse = criterion(outputs, y_tensor).item()
+            metrics = {"mse": mse, "rmse": mse**0.5}
+
+    model_path = f"ml_models/model_{model_id}.pth"
+    torch.save(model.state_dict(), model_path)
+    return metrics, model_path
 
 # --- Main Training Task ---
 
@@ -56,12 +174,15 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
     try:
         crud.update_model_status(db, model_id, "running")
 
+        # Broadcast start
+        asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "started"})))
+
         dataset = crud.get_dataset(db, dataset_id)
         file_location = f"uploads/{dataset.filename}"
         df = pd.read_csv(file_location) if dataset.filename.endswith('.csv') else pd.read_excel(file_location)
 
         model_type = model_info.get('model_type')
-        task_type = model_info.get('task_type') # e.g., 'classification', 'clustering'
+        task_type = model_info.get('task_type') # e.g., 'classification', 'clustering', 'regression'
         hyperparams = model_info.get('hyperparameters', {})
         target_column = model_info.get('target_column')
 
@@ -71,16 +192,18 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
             raise ValueError(f"Model type '{model_type}' not found for task '{task_type}'")
 
         # --- Data Preparation ---
-        # For supervised tasks, separate X and y. For unsupervised, use all numeric data.
-        if task_type == "classification":
+        if task_type in ["classification", "regression"]:
             if not target_column:
-                raise ValueError("Target column is required for classification")
+                raise ValueError(f"Target column is required for {task_type}")
+
             X = df.drop(columns=[target_column]).select_dtypes(include=['number'])
             y = df[target_column]
-            # Encode labels for classification
-            le = LabelEncoder()
-            y_encoded = le.fit_transform(y)
-            X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
+
+            if task_type == "classification":
+                le = LabelEncoder()
+                y = le.fit_transform(y)
+
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         else:
             # For clustering/PCA, use all numeric data
             X = df.select_dtypes(include=['number'])
@@ -91,22 +214,31 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
         # --- Model Training & Evaluation ---
         metrics = {}
         if model_class == "pytorch": # Handling PyTorch case
-            metrics, model_path = train_pytorch_model(df, target_column, hyperparams, model_id)
+            metrics, model_path = train_pytorch_model(df, target_column, hyperparams, model_id, task_type)
         else:
             model = model_class(**hyperparams)
 
-            if task_type == "classification":
+            if task_type in ["classification", "regression"]:
                 model.fit(X_train, y_train)
                 preds = model.predict(X_test)
-                metrics = {
-                    "accuracy": accuracy_score(y_test, preds),
-                    "precision": precision_score(y_test, preds, average='weighted', zero_division=0),
-                    "recall": recall_score(y_test, preds, average='weighted', zero_division=0),
-                    "f1_score": f1_score(y_test, preds, average='weighted', zero_division=0),
-                }
+
+                if task_type == "classification":
+                    metrics = {
+                        "accuracy": accuracy_score(y_test, preds),
+                        "precision": precision_score(y_test, preds, average='weighted', zero_division=0),
+                        "recall": recall_score(y_test, preds, average='weighted', zero_division=0),
+                        "f1_score": f1_score(y_test, preds, average='weighted', zero_division=0),
+                    }
+                elif task_type == "regression":
+                    metrics = {
+                        "mse": mean_squared_error(y_test, preds),
+                        "rmse": mean_squared_error(y_test, preds, squared=False),
+                        "mae": mean_absolute_error(y_test, preds),
+                        "r2_score": r2_score(y_test, preds)
+                    }
+
             elif task_type == "clustering":
                 labels = model.fit_predict(X_scaled)
-                # Avoid silhouette score for DBSCAN if only one cluster is found (-1 label for noise)
                 if model_type == 'DBSCAN' and len(set(labels)) <= 2:
                      metrics = {"clusters_found": len(set(labels)) - (1 if -1 in labels else 0)}
                 else:
@@ -127,8 +259,12 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
 
         crud.update_model_status(db, model_id, "completed", metrics=metrics, model_path=model_path)
 
+        # Broadcast completion
+        asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "completed", "metrics": metrics})))
+
     except Exception as e:
         crud.update_model_status(db, model_id, "failed")
+        asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "failed", "error": str(e)})))
         print(f"Training failed for model_id {model_id}: {e}")
 
     finally:

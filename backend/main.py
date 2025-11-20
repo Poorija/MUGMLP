@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
@@ -9,9 +9,10 @@ from fastapi.responses import StreamingResponse
 
 from . import models, schemas, crud, security
 from .database import engine, get_db
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_current_superuser
 from .training import train_model_task
 from . import captcha_handler, visualizations
+from .websocket_manager import manager
 import joblib
 
 # Create database tables
@@ -21,6 +22,19 @@ models.Base.metadata.create_all(bind=engine)
 os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI()
+
+# --- WebSocket Endpoint ---
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # We keep the connection open.
+            # The client might send messages if needed (e.g., subscribe to specific model updates)
+            # For now, we just broadcast everything to everyone for simplicity.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # --- Captcha Endpoint ---
 @app.get("/captcha")
@@ -120,7 +134,7 @@ async def upload_dataset(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing file: {e}")
 
-    dataset = schemas.DatasetCreate(filename=file.filename, metadata=metadata_str)
+    dataset = schemas.DatasetCreate(filename=file.filename, file_metadata=metadata_str)
     return crud.create_dataset(db=db, dataset=dataset, project_id=project_id)
 
 def get_and_verify_dataset(dataset_id: int, db: Session, current_user: schemas.User) -> models.Dataset:
@@ -172,8 +186,24 @@ def get_dataset_summary(
             df = pd.read_excel(file_location)
 
         # Generate descriptive statistics
+        # Convert to json split format, but then parse it so we return a dict
         summary = df.describe(include='all').to_json(orient="split")
-        return json.loads(summary)
+        summary_dict = json.loads(summary)
+
+        # Add data distribution info for histograms (simplified: only numeric columns)
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        distributions = {}
+        for col in numeric_cols:
+            # Create a simple histogram using numpy or just value_counts for discrete
+            # For simplicity, we'll just send value counts for small unique sets or binning
+            # Let's use pandas cut for binning
+            try:
+                counts = pd.cut(df[col], bins=10).value_counts(sort=False)
+                distributions[col] = [{"bin": str(k), "count": int(v)} for k, v in counts.items()]
+            except:
+                pass
+
+        return {"summary": summary_dict, "distributions": distributions}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dataset file not found on server")
     except Exception as e:

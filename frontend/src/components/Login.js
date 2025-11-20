@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import api from '../services/api';
+import { Container, Typography, TextField, Button, Paper, Box } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -19,34 +22,42 @@ const Login = () => {
       });
 
       localStorage.setItem('token', response.data.access_token);
-      window.location.href = '/dashboard'; // Redirect to dashboard
+      navigate('/dashboard');
     } catch (err) {
       setError('Failed to login. Please check your credentials.');
     }
   };
 
   return (
-    <div>
-      <h2>Login</h2>
-      <form onSubmit={handleSubmit}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        <button type="submit">Login</button>
-      </form>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-    </div>
+    <Container maxWidth="sm" sx={{ mt: 8 }}>
+      <Paper sx={{ p: 4 }}>
+        <Typography variant="h4" align="center" gutterBottom>Login</Typography>
+        <form onSubmit={handleSubmit}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                label="Email"
+                type="email"
+                variant="outlined"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                fullWidth
+              />
+              <TextField
+                label="Password"
+                type="password"
+                variant="outlined"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                fullWidth
+              />
+              <Button type="submit" variant="contained" size="large" fullWidth>Login</Button>
+          </Box>
+        </form>
+        {error && <Typography color="error" align="center" sx={{ mt: 2 }}>{error}</Typography>}
+      </Paper>
+    </Container>
   );
 };
 

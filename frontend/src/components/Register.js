@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
+import { Container, Typography, TextField, Button, Paper, Box, Alert } from '@mui/material';
+import { Refresh } from '@mui/icons-material';
+import { Link } from 'react-router-dom';
 
 const Register = () => {
   const [email, setEmail] = useState('');
@@ -40,36 +43,62 @@ const Register = () => {
       setSuccess('Registration successful! You can now login.');
     } catch (err) {
       setError('Registration failed. Invalid captcha or email already in use.');
-      fetchCaptcha(); // Get a new captcha after a failed attempt
+      fetchCaptcha();
     }
   };
 
   return (
-    <div>
-      <h2>Register</h2>
-      <form onSubmit={handleSubmit}>
-        <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+    <Container maxWidth="sm" sx={{ mt: 8 }}>
+      <Paper sx={{ p: 4 }}>
+        <Typography variant="h4" align="center" gutterBottom>Register</Typography>
+        <form onSubmit={handleSubmit}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                label="Email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                fullWidth
+              />
+              <TextField
+                label="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                fullWidth
+              />
 
-        {captchaImageUrl && (
-          <div>
-            <img src={captchaImageUrl} alt="Captcha" />
-            <button type="button" onClick={fetchCaptcha}>Refresh Captcha</button>
-            <input
-              type="text"
-              placeholder="Enter Captcha"
-              value={captchaText}
-              onChange={(e) => setCaptchaText(e.target.value)}
-              required
-            />
-          </div>
+              {captchaImageUrl && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, border: '1px solid #eee', p: 2, borderRadius: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <img src={captchaImageUrl} alt="Captcha" style={{ maxHeight: 50 }} />
+                        <Button onClick={fetchCaptcha} startIcon={<Refresh />}>Refresh</Button>
+                    </Box>
+                    <TextField
+                        label="Enter Captcha"
+                        value={captchaText}
+                        onChange={(e) => setCaptchaText(e.target.value)}
+                        required
+                        fullWidth
+                    />
+                </Box>
+              )}
+
+              <Button type="submit" variant="contained" size="large" fullWidth>Register</Button>
+          </Box>
+        </form>
+
+        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        {success && (
+            <Box sx={{ mt: 2 }}>
+                <Alert severity="success">{success}</Alert>
+                <Button component={Link} to="/login" sx={{ mt: 1 }}>Go to Login</Button>
+            </Box>
         )}
-
-        <button type="submit">Register</button>
-      </form>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {success && <p style={{ color: 'green' }}>{success}</p>}
-    </div>
+      </Paper>
+    </Container>
   );
 };
 
