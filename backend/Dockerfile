@@ -1,17 +1,21 @@
-# Set the base image
-FROM python:3.9
+# استفاده از نسخه Slim برای کاهش حجم
+FROM python:3.9-slim
 
-# Set the working directory
+# تنظیمات برای جلوگیری از ساخت فایل‌های اضافی و نمایش آنی لاگ‌ها
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Copy the requirements file
+# نصب وابستگی‌ها
 COPY requirements.txt .
-
-# Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
+# کپی کدهای پروژه
 COPY . .
 
-# Command to run the application
+# پورت کانتینر
+EXPOSE 8000
+
+# دستور اجرا (با حالت reload برای دولوپ)
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -1,17 +1,19 @@
-# Set the base image
-FROM node:22
+# استفاده از Node 22 Alpine طبق نیاز package.json شما
+FROM node:22-alpine
 
-# Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# کپی کردن پکیج‌ها و فایل قفل برای نصب دقیق نسخه‌ها
 COPY package.json ./
 
-# Install dependencies
+# نصب وابستگی‌ها
 RUN npm install
 
-# Copy the rest of the application code
+# کپی کردن سورس کد
 COPY . .
 
-# Start the app
+# پورت کانتینر
+EXPOSE 3000
+
+# دستور اجرا
 CMD ["npm", "start"]
