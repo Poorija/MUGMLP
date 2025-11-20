@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from .database import Base
 from datetime import datetime
@@ -31,7 +31,7 @@ class Dataset(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String)
-    metadata = Column(Text) # Storing metadata as JSON string
+    file_metadata = Column(Text) # Storing metadata as JSON string
     created_at = Column(DateTime, default=datetime.utcnow)
     project_id = Column(Integer, ForeignKey("projects.id"))
 

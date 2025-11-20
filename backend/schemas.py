@@ -49,7 +49,7 @@ class TokenData(BaseModel):
 # --- Dataset Schemas ---
 class DatasetBase(BaseModel):
     filename: str
-    metadata: str # JSON string for simplicity
+    file_metadata: str # JSON string for simplicity
 
 class DatasetCreate(DatasetBase):
     pass
