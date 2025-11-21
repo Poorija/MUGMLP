@@ -23,6 +23,14 @@ os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for testing
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # --- WebSocket Endpoint ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -300,8 +308,82 @@ async def get_visualization(
         image_buf = visualizations.create_cluster_scatter_plot(model, dataset_path)
         return StreamingResponse(image_buf, media_type="image/png")
 
+    elif vis_type == "feature_importance":
+        if ml_model.task_type not in ["classification", "regression"]:
+            raise HTTPException(status_code=400, detail="Feature importance is only for supervised models")
+
+        # Check if model supports it (trees)
+        estimator = model.named_steps['model'] if hasattr(model, 'named_steps') else model
+        if not hasattr(estimator, 'feature_importances_'):
+             raise HTTPException(status_code=400, detail="This model does not support feature importance")
+
+        image_buf = visualizations.create_feature_importance_plot(model, dataset_path, ml_model.target_column)
+        return StreamingResponse(image_buf, media_type="image/png")
+
+    elif vis_type == "actual_vs_predicted":
+        if ml_model.task_type != "regression":
+             raise HTTPException(status_code=400, detail="Actual vs Predicted is only for regression models")
+        image_buf = visualizations.create_actual_vs_predicted_plot(model, dataset_path, ml_model.target_column)
+        return StreamingResponse(image_buf, media_type="image/png")
+
     else:
         raise HTTPException(status_code=404, detail="Visualization type not found")
+
+# --- Prediction Endpoint ---
+@app.post("/models/{model_id}/predict")
+async def predict(
+    model_id: int,
+    data: dict, # Accepts JSON with keys matching feature names
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    ml_model = crud.get_ml_model(db, model_id)
+    if not ml_model or not ml_model.model_path:
+        raise HTTPException(status_code=404, detail="Model not found or training not complete")
+
+    get_and_verify_dataset(ml_model.dataset_id, db, current_user)
+
+    try:
+        # Load model (which is now a pipeline)
+        if ml_model.model_type == "SimpleNN":
+            # PyTorch loading logic
+             # TODO: Implementing PyTorch loading for inference
+             # We need to reconstruct the model architecture and state dict
+             # For now, this is a limitation we should acknowledge or fix if time permits.
+             # Re-instantiating SimpleNN requires knowing input_dim etc which are not easily saved.
+             # A better way would be to save the whole model object or metadata.
+             raise HTTPException(status_code=501, detail="Inference for PyTorch models not fully implemented yet.")
+        else:
+            model = joblib.load(ml_model.model_path)
+
+        # Create DataFrame from input data
+        # Expecting input like {"feature1": val1, "feature2": val2}
+        # or {"features": [{"f1": v1}, {"f1": v2}]} for batch
+
+        if "features" in data and isinstance(data["features"], list):
+            input_df = pd.DataFrame(data["features"])
+        else:
+             input_df = pd.DataFrame([data])
+
+        # Attempt to convert columns to numeric where possible, as API input is likely strings
+        for col in input_df.columns:
+            # We can try to convert to numeric, if it fails (e.g. categorical), it keeps as object/string
+            input_df[col] = pd.to_numeric(input_df[col], errors='ignore')
+
+        # The pipeline handles preprocessing!
+        predictions = model.predict(input_df)
+
+        # Convert numpy/tensor to list
+        if hasattr(predictions, "tolist"):
+            predictions = predictions.tolist()
+        elif isinstance(predictions, pd.Series):
+             predictions = predictions.tolist()
+
+        return {"predictions": predictions}
+
+    except Exception as e:
+        print(f"Prediction error: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.get("/")
 def read_root():

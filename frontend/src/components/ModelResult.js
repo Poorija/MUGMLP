@@ -1,8 +1,10 @@
-import React from 'react';
-import { Card, CardContent, Typography, Chip, Box, Grid } from '@mui/material';
-import { CheckCircle, Error, HourglassEmpty, Loop } from '@mui/icons-material';
+import React, { useState } from 'react';
+import { Card, CardContent, Typography, Chip, Box, Grid, Button } from '@mui/material';
+import { CheckCircle, Error, HourglassEmpty, Loop, Science } from '@mui/icons-material';
+import Predict from './Predict';
 
-const ModelResult = ({ model }) => {
+const ModelResult = ({ model, dataset }) => {
+  const [predictOpen, setPredictOpen] = useState(false);
   if (!model) return null;
 
   const metrics = model.evaluation_metrics ? JSON.parse(model.evaluation_metrics) : {};
@@ -23,7 +25,20 @@ const ModelResult = ({ model }) => {
             <CardContent>
                 <Box display="flex" alignItems="center" justifyContent="space-between">
                     <Typography variant="h5">{model.name}</Typography>
-                    <Chip icon={getStatusIcon(model.status)} label={model.status.toUpperCase()} />
+                    <Box>
+                        {model.status === 'completed' && (
+                            <Button
+                                variant="outlined"
+                                startIcon={<Science />}
+                                size="small"
+                                onClick={() => setPredictOpen(true)}
+                                sx={{ mr: 1 }}
+                            >
+                                Predict
+                            </Button>
+                        )}
+                        <Chip icon={getStatusIcon(model.status)} label={model.status.toUpperCase()} />
+                    </Box>
                 </Box>
                 <Typography color="text.secondary" gutterBottom>{model.model_type} ({model.task_type})</Typography>
 
@@ -66,8 +81,35 @@ const ModelResult = ({ model }) => {
                         />
                     </Grid>
                 )}
+                {model.task_type === 'regression' && (
+                    <Grid item xs={12} md={6}>
+                        <Typography variant="h6">Actual vs Predicted</Typography>
+                        <img
+                            src={`http://localhost:8000/models/${model.id}/visualizations/actual_vs_predicted`}
+                            alt="Actual vs Predicted"
+                            style={{ maxWidth: '100%', height: 'auto', border: '1px solid #ddd' }}
+                        />
+                    </Grid>
+                )}
+                {['RandomForestClassifier', 'DecisionTreeClassifier', 'RandomForestRegressor', 'DecisionTreeRegressor', 'XGBClassifier', 'XGBRegressor'].includes(model.model_type) && (
+                    <Grid item xs={12} md={6}>
+                        <Typography variant="h6">Feature Importance</Typography>
+                        <img
+                            src={`http://localhost:8000/models/${model.id}/visualizations/feature_importance`}
+                            alt="Feature Importance"
+                            style={{ maxWidth: '100%', height: 'auto', border: '1px solid #ddd' }}
+                        />
+                    </Grid>
+                )}
             </Grid>
         )}
+
+        <Predict
+            open={predictOpen}
+            onClose={() => setPredictOpen(false)}
+            model={model}
+            dataset={dataset}
+        />
     </Box>
   );
 };
