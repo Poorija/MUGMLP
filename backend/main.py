@@ -14,6 +14,7 @@ from .training import train_model_task
 from . import captcha_handler, visualizations
 from .websocket_manager import manager
 import joblib
+import pyotp
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -23,13 +24,14 @@ os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for testing
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Allow all origins for testing
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws")
@@ -54,7 +56,21 @@ async def get_captcha():
 
 # --- Authentication Endpoints ---
 @app.post("/token", response_model=schemas.Token)
-def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+def login_for_access_token(
+    db: Session = Depends(get_db),
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    # Optional captcha fields in headers or query params, but OAuth2PasswordRequestForm is standard.
+    # We can check captcha separately if passed in headers, or we might need a custom login endpoint.
+    # For now, let's assume specific headers for captcha if provided, or skip for basic auth flow?
+    # The prompt asked to ADD captcha for login.
+    captcha_session_id: str = Depends(lambda x: x.headers.get("X-Captcha-Session-Id")),
+    captcha_text: str = Depends(lambda x: x.headers.get("X-Captcha-Text")),
+    otp_code: str = Depends(lambda x: x.headers.get("X-OTP-Code"))
+):
+    # 1. Verify Captcha
+    if not captcha_session_id or not captcha_text or not captcha_handler.verify_captcha(captcha_session_id, captcha_text):
+        raise HTTPException(status_code=400, detail="Invalid or missing captcha")
+
     user = crud.get_user_by_email(db, email=form_data.username)
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -62,14 +78,86 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 2. Check 2FA
+    if user.otp_secret:
+        if not otp_code:
+            # Tell client 2FA is required. But 401 is for auth failure.
+            # We can return a 403 or custom error, or just fail.
+            # Better: return 401 with specific detail so client knows to prompt 2FA
+            # But here we just check if provided.
+             raise HTTPException(status_code=401, detail="2FA Required")
+
+        totp = pyotp.TOTP(user.otp_secret)
+        if not totp.verify(otp_code):
+            raise HTTPException(status_code=401, detail="Invalid 2FA Code")
+
+    # 3. Check Force Change Password
+    require_password_change = user.force_change_password
+
+    # Create token
     access_token = security.create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "require_password_change": require_password_change,
+        "require_2fa": bool(user.otp_secret) # Just info for client, though verified above
+    }
+
+@app.post("/auth/change-password")
+def change_password(
+    password_update: schemas.UserPasswordUpdate,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    # Verify old password
+    if not security.verify_password(password_update.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect old password")
+
+    # Validate new password strength
+    if not security.validate_password_strength(password_update.new_password):
+        raise HTTPException(status_code=400, detail="Password does not meet strength requirements")
+
+    # Update
+    current_user.hashed_password = security.get_password_hash(password_update.new_password)
+    current_user.force_change_password = False
+    db.commit()
+    return {"message": "Password updated successfully"}
+
+@app.get("/auth/setup-2fa")
+def setup_2fa(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    secret = pyotp.random_base32()
+    # Ideally we store this temporarily until verified, but for simplicity we store immediately
+    # Or we return it and client confirms with a code.
+    # Let's return secret and url.
+    auth_url = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name="ML Platform")
+    return {"secret": secret, "otpauth_url": auth_url}
+
+@app.post("/auth/verify-2fa")
+def verify_2fa(
+    code: str,
+    secret: str,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    totp = pyotp.TOTP(secret)
+    if totp.verify(code):
+        current_user.otp_secret = secret
+        db.commit()
+        return {"message": "2FA enabled successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid code")
 
 @app.post("/users/", response_model=schemas.User)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     # Verify captcha first
     if not captcha_handler.verify_captcha(user.captcha_session_id, user.captcha_text):
         raise HTTPException(status_code=400, detail="Invalid captcha")
+
+    # Verify Password Strength
+    if not security.validate_password_strength(user.password):
+        raise HTTPException(status_code=400, detail="Password too weak. Minimum 8 chars, mixed letters/numbers.")
 
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:

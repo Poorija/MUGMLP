@@ -11,6 +11,10 @@ class UserCreate(UserBase):
     captcha_session_id: str
     captcha_text: str
 
+class UserPasswordUpdate(BaseModel):
+    old_password: str
+    new_password: str
+
 class User(UserBase):
     id: int
     is_active: bool = True # Assuming we might add this later
@@ -42,6 +46,8 @@ class MLModel(MLModelBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+    require_password_change: Optional[bool] = False
+    require_2fa: Optional[bool] = False
 
 class TokenData(BaseModel):
     email: Optional[str] = None
