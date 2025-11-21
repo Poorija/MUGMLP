@@ -14,6 +14,7 @@ from .training import train_model_task
 from . import captcha_handler, visualizations
 from .websocket_manager import manager
 import joblib
+import pyotp
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -22,6 +23,15 @@ models.Base.metadata.create_all(bind=engine)
 os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI()
+
+# Allow all origins for testing
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws")
@@ -46,7 +56,21 @@ async def get_captcha():
 
 # --- Authentication Endpoints ---
 @app.post("/token", response_model=schemas.Token)
-def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()):
+def login_for_access_token(
+    db: Session = Depends(get_db),
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    # Optional captcha fields in headers or query params, but OAuth2PasswordRequestForm is standard.
+    # We can check captcha separately if passed in headers, or we might need a custom login endpoint.
+    # For now, let's assume specific headers for captcha if provided, or skip for basic auth flow?
+    # The prompt asked to ADD captcha for login.
+    captcha_session_id: str = Depends(lambda x: x.headers.get("X-Captcha-Session-Id")),
+    captcha_text: str = Depends(lambda x: x.headers.get("X-Captcha-Text")),
+    otp_code: str = Depends(lambda x: x.headers.get("X-OTP-Code"))
+):
+    # 1. Verify Captcha
+    if not captcha_session_id or not captcha_text or not captcha_handler.verify_captcha(captcha_session_id, captcha_text):
+        raise HTTPException(status_code=400, detail="Invalid or missing captcha")
+
     user = crud.get_user_by_email(db, email=form_data.username)
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -54,14 +78,86 @@ def login_for_access_token(db: Session = Depends(get_db), form_data: OAuth2Passw
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 2. Check 2FA
+    if user.otp_secret:
+        if not otp_code:
+            # Tell client 2FA is required. But 401 is for auth failure.
+            # We can return a 403 or custom error, or just fail.
+            # Better: return 401 with specific detail so client knows to prompt 2FA
+            # But here we just check if provided.
+             raise HTTPException(status_code=401, detail="2FA Required")
+
+        totp = pyotp.TOTP(user.otp_secret)
+        if not totp.verify(otp_code):
+            raise HTTPException(status_code=401, detail="Invalid 2FA Code")
+
+    # 3. Check Force Change Password
+    require_password_change = user.force_change_password
+
+    # Create token
     access_token = security.create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "require_password_change": require_password_change,
+        "require_2fa": bool(user.otp_secret) # Just info for client, though verified above
+    }
+
+@app.post("/auth/change-password")
+def change_password(
+    password_update: schemas.UserPasswordUpdate,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    # Verify old password
+    if not security.verify_password(password_update.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect old password")
+
+    # Validate new password strength
+    if not security.validate_password_strength(password_update.new_password):
+        raise HTTPException(status_code=400, detail="Password does not meet strength requirements")
+
+    # Update
+    current_user.hashed_password = security.get_password_hash(password_update.new_password)
+    current_user.force_change_password = False
+    db.commit()
+    return {"message": "Password updated successfully"}
+
+@app.get("/auth/setup-2fa")
+def setup_2fa(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    secret = pyotp.random_base32()
+    # Ideally we store this temporarily until verified, but for simplicity we store immediately
+    # Or we return it and client confirms with a code.
+    # Let's return secret and url.
+    auth_url = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name="ML Platform")
+    return {"secret": secret, "otpauth_url": auth_url}
+
+@app.post("/auth/verify-2fa")
+def verify_2fa(
+    code: str,
+    secret: str,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    totp = pyotp.TOTP(secret)
+    if totp.verify(code):
+        current_user.otp_secret = secret
+        db.commit()
+        return {"message": "2FA enabled successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid code")
 
 @app.post("/users/", response_model=schemas.User)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     # Verify captcha first
     if not captcha_handler.verify_captcha(user.captcha_session_id, user.captcha_text):
         raise HTTPException(status_code=400, detail="Invalid captcha")
+
+    # Verify Password Strength
+    if not security.validate_password_strength(user.password):
+        raise HTTPException(status_code=400, detail="Password too weak. Minimum 8 chars, mixed letters/numbers.")
 
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:
@@ -300,8 +396,82 @@ async def get_visualization(
         image_buf = visualizations.create_cluster_scatter_plot(model, dataset_path)
         return StreamingResponse(image_buf, media_type="image/png")
 
+    elif vis_type == "feature_importance":
+        if ml_model.task_type not in ["classification", "regression"]:
+            raise HTTPException(status_code=400, detail="Feature importance is only for supervised models")
+
+        # Check if model supports it (trees)
+        estimator = model.named_steps['model'] if hasattr(model, 'named_steps') else model
+        if not hasattr(estimator, 'feature_importances_'):
+             raise HTTPException(status_code=400, detail="This model does not support feature importance")
+
+        image_buf = visualizations.create_feature_importance_plot(model, dataset_path, ml_model.target_column)
+        return StreamingResponse(image_buf, media_type="image/png")
+
+    elif vis_type == "actual_vs_predicted":
+        if ml_model.task_type != "regression":
+             raise HTTPException(status_code=400, detail="Actual vs Predicted is only for regression models")
+        image_buf = visualizations.create_actual_vs_predicted_plot(model, dataset_path, ml_model.target_column)
+        return StreamingResponse(image_buf, media_type="image/png")
+
     else:
         raise HTTPException(status_code=404, detail="Visualization type not found")
+
+# --- Prediction Endpoint ---
+@app.post("/models/{model_id}/predict")
+async def predict(
+    model_id: int,
+    data: dict, # Accepts JSON with keys matching feature names
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    ml_model = crud.get_ml_model(db, model_id)
+    if not ml_model or not ml_model.model_path:
+        raise HTTPException(status_code=404, detail="Model not found or training not complete")
+
+    get_and_verify_dataset(ml_model.dataset_id, db, current_user)
+
+    try:
+        # Load model (which is now a pipeline)
+        if ml_model.model_type == "SimpleNN":
+            # PyTorch loading logic
+             # TODO: Implementing PyTorch loading for inference
+             # We need to reconstruct the model architecture and state dict
+             # For now, this is a limitation we should acknowledge or fix if time permits.
+             # Re-instantiating SimpleNN requires knowing input_dim etc which are not easily saved.
+             # A better way would be to save the whole model object or metadata.
+             raise HTTPException(status_code=501, detail="Inference for PyTorch models not fully implemented yet.")
+        else:
+            model = joblib.load(ml_model.model_path)
+
+        # Create DataFrame from input data
+        # Expecting input like {"feature1": val1, "feature2": val2}
+        # or {"features": [{"f1": v1}, {"f1": v2}]} for batch
+
+        if "features" in data and isinstance(data["features"], list):
+            input_df = pd.DataFrame(data["features"])
+        else:
+             input_df = pd.DataFrame([data])
+
+        # Attempt to convert columns to numeric where possible, as API input is likely strings
+        for col in input_df.columns:
+            # We can try to convert to numeric, if it fails (e.g. categorical), it keeps as object/string
+            input_df[col] = pd.to_numeric(input_df[col], errors='ignore')
+
+        # The pipeline handles preprocessing!
+        predictions = model.predict(input_df)
+
+        # Convert numpy/tensor to list
+        if hasattr(predictions, "tolist"):
+            predictions = predictions.tolist()
+        elif isinstance(predictions, pd.Series):
+             predictions = predictions.tolist()
+
+        return {"predictions": predictions}
+
+    except Exception as e:
+        print(f"Prediction error: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.get("/")
 def read_root():

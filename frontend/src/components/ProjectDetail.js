@@ -333,7 +333,7 @@ const ProjectDetail = () => {
                                 </Grid>
                                 <Grid item xs={8}>
                                     {selectedModel ? (
-                                        <ModelResult model={selectedModel} />
+                                        <ModelResult model={selectedModel} dataset={selectedDataset} />
                                     ) : (
                                         <Typography>Select a model to view results.</Typography>
                                     )}

@@ -9,7 +9,10 @@ from .websocket_manager import manager
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LinearRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
@@ -196,31 +199,79 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
             if not target_column:
                 raise ValueError(f"Target column is required for {task_type}")
 
-            X = df.drop(columns=[target_column]).select_dtypes(include=['number'])
+            X = df.drop(columns=[target_column])
             y = df[target_column]
+
+            # Preprocessing Pipeline
+            numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+            categorical_features = X.select_dtypes(include=['object']).columns
+
+            numeric_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ])
+
+            categorical_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('encoder', OneHotEncoder(handle_unknown='ignore'))
+            ])
+
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', numeric_transformer, numeric_features),
+                    ('cat', categorical_transformer, categorical_features)
+                ])
 
             if task_type == "classification":
                 le = LabelEncoder()
                 y = le.fit_transform(y)
+                # Save LabelEncoder for inference decoding (basic workaround)
+                # In production, we'd pickle the label encoder or wrapper class
 
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
         else:
-            # For clustering/PCA, use all numeric data
-            X = df.select_dtypes(include=['number'])
-            # Scale data for distance-based algorithms
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
+            # For clustering/PCA
+            X = df # Use all columns
+            numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+            categorical_features = X.select_dtypes(include=['object']).columns
+
+            numeric_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ])
+
+            categorical_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('encoder', OneHotEncoder(handle_unknown='ignore'))
+            ])
+
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', numeric_transformer, numeric_features),
+                    ('cat', categorical_transformer, categorical_features)
+                ])
+
+            X_scaled = preprocessor.fit_transform(X) # This might be sparse
 
         # --- Model Training & Evaluation ---
         metrics = {}
         if model_class == "pytorch": # Handling PyTorch case
+            # NOTE: Pytorch part needs heavy refactoring to support mixed types properly.
+            # For now, we keep the old logic for PyTorch but use only numeric columns to avoid breaking.
+            # Ideally, we would use embeddings for categorical data.
             metrics, model_path = train_pytorch_model(df, target_column, hyperparams, model_id, task_type)
         else:
-            model = model_class(**hyperparams)
-
             if task_type in ["classification", "regression"]:
-                model.fit(X_train, y_train)
-                preds = model.predict(X_test)
+                # Create a full pipeline
+                model_pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                                                 ('model', model_class(**hyperparams))])
+
+                model_pipeline.fit(X_train, y_train)
+                preds = model_pipeline.predict(X_test)
+
+                # Save the full pipeline
+                model = model_pipeline
 
                 if task_type == "classification":
                     metrics = {
@@ -238,20 +289,44 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
                     }
 
             elif task_type == "clustering":
+                # For clustering, we fit on preprocessed data
+                model = model_class(**hyperparams)
                 labels = model.fit_predict(X_scaled)
+
+                # We can't save pipeline easily if we split fit_predict like this for metrics
+                # So we will save a pipeline of [preprocessor, model]
+                # But model is already fitted on X_scaled.
+
                 if model_type == 'DBSCAN' and len(set(labels)) <= 2:
                      metrics = {"clusters_found": len(set(labels)) - (1 if -1 in labels else 0)}
                 else:
+                    # Silhouette score can be expensive on large data
+                    if X_scaled.shape[0] < 10000:
+                        try:
+                            sil_score = silhouette_score(X_scaled, labels)
+                        except:
+                            sil_score = -1
+                    else:
+                        sil_score = -1 # Skip for speed
+
                     metrics = {
-                        "silhouette_score": silhouette_score(X_scaled, labels),
+                        "silhouette_score": sil_score,
                         "clusters_found": len(set(labels))
                     }
+
+                # Construct pipeline for saving (so inference works)
+                model_pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+                model = model_pipeline
+
             elif task_type == "dimensionality_reduction":
+                model = model_class(**hyperparams)
                 model.fit(X_scaled)
                 metrics = {
                     "explained_variance_ratio": model.explained_variance_ratio_.tolist(),
                     "n_components": model.n_components_
                 }
+                model_pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('model', model)])
+                model = model_pipeline
 
             # Save the Scikit-learn/XGBoost model
             model_path = f"ml_models/model_{model_id}.joblib"

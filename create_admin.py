@@ -13,13 +13,14 @@ async def main():
             return
 
         # Create a new admin user
-        email = os.environ.get("ADMIN_EMAIL", "admin@example.com")
-        password = os.environ.get("ADMIN_PASSWORD", "admin")
+        email = os.environ.get("ADMIN_EMAIL", "admin") # User: admin
+        password = os.environ.get("ADMIN_PASSWORD", "P@ssw0rd")
 
         admin_user = User(
             email=email,
             hashed_password=get_password_hash(password),
-            is_superuser=True
+            is_superuser=True,
+            force_change_password=True
         )
         db.add(admin_user)
         db.commit()
