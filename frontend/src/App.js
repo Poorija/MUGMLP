@@ -7,6 +7,8 @@ import Register from './components/Register';
 import Dashboard from './components/Dashboard';
 import ProjectDetail from './components/ProjectDetail';
 import About from './components/About';
+import ProfilePage from './ProfilePage';
+import { TooltipProvider } from './GlobalTooltip';
 import './App.css';
 
 const App = () => {
@@ -14,12 +16,14 @@ const App = () => {
 
   return (
     <ThemeProvider>
+      <TooltipProvider>
         <Router>
         <div className="App">
             <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/about" element={<About />} />
+            <Route path="/profile" element={<ProfilePage />} />
             <Route
                 path="/dashboard"
                 element={<Dashboard />}
@@ -35,6 +39,7 @@ const App = () => {
             </Routes>
         </div>
         </Router>
+      </TooltipProvider>
     </ThemeProvider>
   );
 }

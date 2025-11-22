@@ -13,6 +13,7 @@ from .dependencies import get_current_user, get_current_superuser
 from .training import train_model_task
 from . import captcha_handler, visualizations
 from .websocket_manager import manager
+from . import activity
 import joblib
 import pyotp
 
@@ -95,6 +96,9 @@ def login_for_access_token(
     # 3. Check Force Change Password
     require_password_change = user.force_change_password
 
+    # Log Activity
+    activity.create_activity_log(db, user_id=user.id, action="login", details="User logged in")
+
     # Create token
     access_token = security.create_access_token(data={"sub": user.email})
 
@@ -104,6 +108,37 @@ def login_for_access_token(
         "require_password_change": require_password_change,
         "require_2fa": bool(user.otp_secret) # Just info for client, though verified above
     }
+
+@app.get("/users/me", response_model=schemas.User)
+def read_users_me(current_user: schemas.User = Depends(get_current_user)):
+    return current_user
+
+@app.put("/users/me", response_model=schemas.User)
+def update_user_me(
+    user_update: schemas.UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    if user_update.email:
+        # Check if email is taken
+        existing_user = crud.get_user_by_email(db, email=user_update.email)
+        if existing_user and existing_user.id != current_user.id:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        current_user.email = user_update.email
+
+    db.commit()
+    db.refresh(current_user)
+    activity.create_activity_log(db, user_id=current_user.id, action="update_profile", details="User updated profile details")
+    return current_user
+
+@app.get("/users/history", response_model=List[schemas.ActivityLog])
+def read_user_history(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    return activity.get_activity_logs(db, user_id=current_user.id, skip=skip, limit=limit)
 
 @app.post("/auth/change-password")
 def change_password(
@@ -123,31 +158,41 @@ def change_password(
     current_user.hashed_password = security.get_password_hash(password_update.new_password)
     current_user.force_change_password = False
     db.commit()
+    activity.create_activity_log(db, user_id=current_user.id, action="change_password", details="User changed password")
     return {"message": "Password updated successfully"}
 
-@app.get("/auth/setup-2fa")
+@app.post("/auth/setup-2fa")
 def setup_2fa(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
     secret = pyotp.random_base32()
-    # Ideally we store this temporarily until verified, but for simplicity we store immediately
-    # Or we return it and client confirms with a code.
-    # Let's return secret and url.
     auth_url = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name="ML Platform")
     return {"secret": secret, "otpauth_url": auth_url}
 
-@app.post("/auth/verify-2fa")
-def verify_2fa(
-    code: str,
-    secret: str,
+@app.post("/auth/enable-2fa")
+def enable_2fa(
+    payload: schemas.User2FASetup,
+    code: str, # passed as query param or we can make it part of body
     db: Session = Depends(get_db),
     current_user: schemas.User = Depends(get_current_user)
 ):
-    totp = pyotp.TOTP(secret)
+    # This endpoint verifies the code against the provided secret (from frontend) and SAVES it to user
+    totp = pyotp.TOTP(payload.otp_secret)
     if totp.verify(code):
-        current_user.otp_secret = secret
+        current_user.otp_secret = payload.otp_secret
         db.commit()
+        activity.create_activity_log(db, user_id=current_user.id, action="enable_2fa", details="User enabled 2FA")
         return {"message": "2FA enabled successfully"}
     else:
         raise HTTPException(status_code=400, detail="Invalid code")
+
+@app.post("/auth/disable-2fa")
+def disable_2fa(
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    current_user.otp_secret = None
+    db.commit()
+    activity.create_activity_log(db, user_id=current_user.id, action="disable_2fa", details="User disabled 2FA")
+    return {"message": "2FA disabled successfully"}
 
 @app.post("/users/", response_model=schemas.User)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):

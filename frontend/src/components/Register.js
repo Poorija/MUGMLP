@@ -4,6 +4,7 @@ import { Container, Typography, TextField, Button, Paper, Box, Alert } from '@mu
 import { Refresh } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Tooltip } from '../GlobalTooltip';
 import zxcvbn from 'zxcvbn';
 
 const Register = () => {
@@ -62,27 +63,32 @@ const Register = () => {
   const strengthColor = ['error', 'error', 'warning', 'success', 'success'];
 
   return (
-    <Container maxWidth="sm" sx={{ mt: 8 }}>
-      <Paper sx={{ p: 4 }}>
+    <div className="login-background">
+    <Container maxWidth="sm" sx={{ mt: 8, position: 'relative', zIndex: 2 }}>
+      <Paper className="glass" elevation={0} sx={{ p: 4 }}>
         <Typography variant="h4" align="center" gutterBottom>{t('register')}</Typography>
         <form onSubmit={handleSubmit}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                label={t('email')}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                fullWidth
-              />
-              <TextField
-                label={t('password')}
-                type="password"
-                value={password}
-                onChange={handlePasswordChange}
-                required
-                fullWidth
-              />
+              <Tooltip text="Enter a valid email address">
+                  <TextField
+                    label={t('email')}
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    fullWidth
+                  />
+              </Tooltip>
+              <Tooltip text="Choose a strong password (min 8 chars, mixed types)">
+                  <TextField
+                    label={t('password')}
+                    type="password"
+                    value={password}
+                    onChange={handlePasswordChange}
+                    required
+                    fullWidth
+                  />
+              </Tooltip>
 
               {/* Password Strength */}
               <Box>
@@ -130,6 +136,7 @@ const Register = () => {
         )}
       </Paper>
     </Container>
+    </div>
   );
 };
 
