@@ -10,12 +10,13 @@ from fastapi.responses import StreamingResponse
 from . import models, schemas, crud, security
 from .database import engine, get_db
 from .dependencies import get_current_user, get_current_superuser
-from .training import train_model_task
+from .training import train_model_task, SimpleNN
 from . import captcha_handler, visualizations
 from .websocket_manager import manager
 from . import activity
 import joblib
 import pyotp
+import torch
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -477,22 +478,9 @@ async def predict(
     get_and_verify_dataset(ml_model.dataset_id, db, current_user)
 
     try:
-        # Load model (which is now a pipeline)
-        if ml_model.model_type == "SimpleNN":
-            # PyTorch loading logic
-             # TODO: Implementing PyTorch loading for inference
-             # We need to reconstruct the model architecture and state dict
-             # For now, this is a limitation we should acknowledge or fix if time permits.
-             # Re-instantiating SimpleNN requires knowing input_dim etc which are not easily saved.
-             # A better way would be to save the whole model object or metadata.
-             raise HTTPException(status_code=501, detail="Inference for PyTorch models not fully implemented yet.")
-        else:
-            model = joblib.load(ml_model.model_path)
-
         # Create DataFrame from input data
         # Expecting input like {"feature1": val1, "feature2": val2}
         # or {"features": [{"f1": v1}, {"f1": v2}]} for batch
-
         if "features" in data and isinstance(data["features"], list):
             input_df = pd.DataFrame(data["features"])
         else:
@@ -503,14 +491,46 @@ async def predict(
             # We can try to convert to numeric, if it fails (e.g. categorical), it keeps as object/string
             input_df[col] = pd.to_numeric(input_df[col], errors='ignore')
 
-        # The pipeline handles preprocessing!
-        predictions = model.predict(input_df)
+        if ml_model.model_type == "SimpleNN":
+            # PyTorch loading logic
+            saved_data = torch.load(ml_model.model_path)
+            metadata = saved_data["metadata"]
 
-        # Convert numpy/tensor to list
-        if hasattr(predictions, "tolist"):
+            model = SimpleNN(
+                input_dim=metadata["input_dim"],
+                hidden_layers=metadata["hidden_layers"],
+                output_dim=metadata["output_dim"],
+                task_type=metadata["task_type"]
+            )
+            model.load_state_dict(saved_data["state_dict"])
+            model.eval()
+
+            # For PyTorch SimpleNN, we assumed only numeric features in training.py
+            # So we select only numeric columns.
+            # Warning: This assumes input_df has same columns as training data.
+            # A robust solution requires saving column names/transformers.
+            # For now, we convert all to float32 tensor.
+            X_tensor = torch.tensor(input_df.values, dtype=torch.float32)
+
+            with torch.no_grad():
+                outputs = model(X_tensor)
+                if metadata["task_type"] == "classification":
+                    _, predictions = torch.max(outputs.data, 1)
+                else:
+                    predictions = outputs
+
             predictions = predictions.tolist()
-        elif isinstance(predictions, pd.Series):
-             predictions = predictions.tolist()
+
+        else:
+            model = joblib.load(ml_model.model_path)
+            # The pipeline handles preprocessing!
+            predictions = model.predict(input_df)
+
+            # Convert numpy/tensor to list
+            if hasattr(predictions, "tolist"):
+                predictions = predictions.tolist()
+            elif isinstance(predictions, pd.Series):
+                predictions = predictions.tolist()
 
         return {"predictions": predictions}
 
