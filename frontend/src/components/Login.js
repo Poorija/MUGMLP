@@ -3,6 +3,7 @@ import api from '../services/api';
 import { Container, Typography, TextField, Button, Paper, Box, Modal, Alert } from '@mui/material';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Tooltip } from '../GlobalTooltip';
 import Logo from './Logo';
 import zxcvbn from 'zxcvbn';
 import '../App.css'; // Ensure we have CSS for blur
@@ -116,7 +117,7 @@ const Login = () => {
   return (
     <div className="login-background">
         <Container maxWidth="sm" sx={{ mt: 8, position: 'relative', zIndex: 2 }}>
-        <Paper sx={{ p: 4, borderRadius: 2, backdropFilter: 'blur(10px)', backgroundColor: 'rgba(255,255,255,0.8)' }}>
+        <Paper className="glass" elevation={0} sx={{ p: 4 }}>
             <Box mb={3}>
                 <Logo size="large" />
             </Box>
@@ -125,38 +126,46 @@ const Login = () => {
             {step === 'login' && (
                 <form onSubmit={handleLogin}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <TextField
-                        label={t('email')}
-                        type="email"
-                        variant="outlined"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        required
-                        fullWidth
-                    />
-                    <TextField
-                        label={t('password')}
-                        type="password"
-                        variant="outlined"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                        fullWidth
-                    />
+                    <Tooltip text="Enter your registered email address">
+                        <TextField
+                            label={t('email')}
+                            type="email"
+                            variant="outlined"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            required
+                            fullWidth
+                        />
+                    </Tooltip>
+                    <Tooltip text="Enter your password">
+                        <TextField
+                            label={t('password')}
+                            type="password"
+                            variant="outlined"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                            fullWidth
+                        />
+                    </Tooltip>
 
                     {/* Captcha */}
                     <Box display="flex" gap={1}>
                          <img src={captchaImage} alt="captcha" style={{ height: 56, borderRadius: 4 }} />
-                         <Button onClick={fetchCaptcha} variant="outlined" size="small">{t('captcha_refresh')}</Button>
+                         <Tooltip text="Click to refresh the captcha image">
+                             <Button onClick={fetchCaptcha} variant="outlined" size="small">{t('captcha_refresh')}</Button>
+                         </Tooltip>
                     </Box>
-                    <TextField
-                        label={t('captcha')}
-                        variant="outlined"
-                        value={captchaText}
-                        onChange={(e) => setCaptchaText(e.target.value)}
-                        required
-                        fullWidth
-                    />
+                    <Tooltip text="Type the characters you see in the image">
+                        <TextField
+                            label={t('captcha')}
+                            variant="outlined"
+                            value={captchaText}
+                            onChange={(e) => setCaptchaText(e.target.value)}
+                            required
+                            fullWidth
+                        />
+                    </Tooltip>
 
                     <Button type="submit" variant="contained" size="large" fullWidth>{t('login')}</Button>
                     <Box textAlign="center">

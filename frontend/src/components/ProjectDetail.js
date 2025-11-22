@@ -8,10 +8,11 @@ import {
   TextField, CircularProgress, Alert
 } from '@mui/material';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   LineChart, Line
 } from 'recharts';
 import { CloudUpload, PlayArrow } from '@mui/icons-material';
+import { Tooltip } from '../GlobalTooltip';
 
 // Task definitions including Regression now
 const TASK_DEFINITIONS = {
@@ -71,25 +72,29 @@ const TrainingForm = ({ dataset, onTrainingStart }) => {
   };
 
   return (
-    <Paper sx={{ p: 2, mt: 2 }}>
+    <Paper className="glass" elevation={0} sx={{ p: 2, mt: 2 }}>
       <Typography variant="h6" gutterBottom>Start New Training</Typography>
       <form onSubmit={handleSubmit}>
         <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-                <TextField
-                    fullWidth label="Model Name"
-                    value={modelName}
-                    onChange={e => setModelName(e.target.value)}
-                    required
-                />
+                <Tooltip text="Give your model a unique name to identify it later">
+                    <TextField
+                        fullWidth label="Model Name"
+                        value={modelName}
+                        onChange={e => setModelName(e.target.value)}
+                        required
+                    />
+                </Tooltip>
             </Grid>
             <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                    <InputLabel>Task Type</InputLabel>
-                    <Select value={taskType} label="Task Type" onChange={e => setTaskType(e.target.value)}>
-                        {Object.keys(TASK_DEFINITIONS).map(task => <MenuItem key={task} value={task}>{task}</MenuItem>)}
-                    </Select>
-                </FormControl>
+                <Tooltip text="Select the type of machine learning task (e.g., Classification)">
+                    <FormControl fullWidth>
+                        <InputLabel>Task Type</InputLabel>
+                        <Select value={taskType} label="Task Type" onChange={e => setTaskType(e.target.value)}>
+                            {Object.keys(TASK_DEFINITIONS).map(task => <MenuItem key={task} value={task}>{task}</MenuItem>)}
+                        </Select>
+                    </FormControl>
+                </Tooltip>
             </Grid>
             <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
@@ -121,7 +126,9 @@ const TrainingForm = ({ dataset, onTrainingStart }) => {
                 </>
             )}
             <Grid item xs={12}>
-                <Button type="submit" variant="contained" startIcon={<PlayArrow />}>Train Model</Button>
+                <Tooltip text="Start the training process in the background">
+                    <Button type="submit" variant="contained" startIcon={<PlayArrow />}>Train Model</Button>
+                </Tooltip>
             </Grid>
         </Grid>
       </form>
@@ -248,7 +255,7 @@ const ProjectDetail = () => {
         <Grid container spacing={3}>
             {/* Left Sidebar: Datasets */}
             <Grid item xs={12} md={3}>
-                <Paper sx={{ p: 2, height: '100%' }}>
+                <Paper className="glass" elevation={0} sx={{ p: 2, height: '100%' }}>
                     <Typography variant="h6">Datasets</Typography>
                     <List>
                         {datasets.map((ds) => (
@@ -257,17 +264,19 @@ const ProjectDetail = () => {
                             </ListItem>
                         ))}
                     </List>
-                    <Button variant="contained" component="label" fullWidth startIcon={<CloudUpload />}>
-                        Upload Dataset
-                        <input type="file" hidden onChange={handleFileUpload} accept=".csv,.xlsx,.xls" />
-                    </Button>
+                    <Tooltip text="Upload a CSV or Excel file">
+                        <Button variant="contained" component="label" fullWidth startIcon={<CloudUpload />}>
+                            Upload Dataset
+                            <input type="file" hidden onChange={handleFileUpload} accept=".csv,.xlsx,.xls" />
+                        </Button>
+                    </Tooltip>
                 </Paper>
             </Grid>
 
             {/* Main Content */}
             <Grid item xs={12} md={9}>
                 {selectedDataset ? (
-                    <Paper sx={{ width: '100%' }}>
+                    <Paper className="glass" elevation={0} sx={{ width: '100%' }}>
                         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
                             <Tabs value={tabValue} onChange={handleTabChange}>
                                 <Tab label="Overview" />
@@ -301,7 +310,7 @@ const ProjectDetail = () => {
                                                              <CartesianGrid strokeDasharray="3 3" />
                                                              <XAxis dataKey="bin" />
                                                              <YAxis />
-                                                             <Tooltip />
+                                                             <RechartsTooltip />
                                                              <Bar dataKey="count" fill="#8884d8" />
                                                          </BarChart>
                                                      </ResponsiveContainer>
@@ -351,7 +360,7 @@ const ProjectDetail = () => {
                                             <CartesianGrid strokeDasharray="3 3" />
                                             <XAxis dataKey="name" />
                                             <YAxis />
-                                            <Tooltip />
+                                            <RechartsTooltip />
                                             <Legend />
                                             {metricKeys.map((key, idx) => (
                                                 <Bar key={key} dataKey={key} fill={['#8884d8', '#82ca9d', '#ffc658'][idx % 3]} />
