@@ -15,8 +15,29 @@ class UserPasswordUpdate(BaseModel):
     old_password: str
     new_password: str
 
+class UserProfileUpdate(BaseModel):
+    email: Optional[str] = None
+    # Add other updatable fields here if needed
+
+class User2FASetup(BaseModel):
+    otp_secret: str
+
+class User2FAVerify(BaseModel):
+    token: str
+
+class ActivityLog(BaseModel):
+    id: int
+    action: str
+    details: Optional[str] = None
+    timestamp: datetime
+
+    class Config:
+        orm_mode = True
+
 class User(UserBase):
     id: int
+    is_superuser: bool = False
+    otp_secret: Optional[str] = None
     is_active: bool = True # Assuming we might add this later
 
     class Config:
