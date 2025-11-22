@@ -41,6 +41,7 @@ TASK_REGISTRY = {
         "RandomForestClassifier": RandomForestClassifier,
         "XGBClassifier": xgb.XGBClassifier,
         "SimpleNN": "pytorch", # Special key for PyTorch models
+        "Auto": "auto", # Special key for AutoML
     },
     "regression": {
         "LinearRegression": LinearRegression,
@@ -48,7 +49,8 @@ TASK_REGISTRY = {
         "RandomForestRegressor": RandomForestRegressor,
         "XGBRegressor": xgb.XGBRegressor,
         "SVR": SVR,
-        "SimpleNN": "pytorch"
+        "SimpleNN": "pytorch",
+        "Auto": "auto", # Special key for AutoML
     },
     "clustering": {
         "KMeans": KMeans,
@@ -166,8 +168,18 @@ def train_pytorch_model(df, target_column, model_params, model_id, task_type="cl
             mse = criterion(outputs, y_tensor).item()
             metrics = {"mse": mse, "rmse": mse**0.5}
 
+    # Save model state and metadata
     model_path = f"ml_models/model_{model_id}.pth"
-    torch.save(model.state_dict(), model_path)
+    save_dict = {
+        "state_dict": model.state_dict(),
+        "metadata": {
+            "input_dim": input_dim,
+            "hidden_layers": hidden_layers,
+            "output_dim": output_dim,
+            "task_type": task_type
+        }
+    }
+    torch.save(save_dict, model_path)
     return metrics, model_path
 
 # --- Main Training Task ---
@@ -261,6 +273,70 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
             # For now, we keep the old logic for PyTorch but use only numeric columns to avoid breaking.
             # Ideally, we would use embeddings for categorical data.
             metrics, model_path = train_pytorch_model(df, target_column, hyperparams, model_id, task_type)
+
+        elif model_class == "auto": # AutoML Case
+            if task_type not in ["classification", "regression"]:
+                raise ValueError("AutoML is currently only supported for classification and regression.")
+
+            best_score = -float('inf')
+            best_model = None
+            best_pipeline = None
+            best_metrics = None
+
+            # Define candidate models
+            if task_type == "classification":
+                candidates = [
+                    ("RandomForest", RandomForestClassifier(n_estimators=100)),
+                    ("XGBoost", xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss')),
+                    ("DecisionTree", DecisionTreeClassifier())
+                ]
+                score_metric = "f1_score"
+            else: # regression
+                candidates = [
+                    ("RandomForest", RandomForestRegressor(n_estimators=100)),
+                    ("XGBoost", xgb.XGBRegressor()),
+                    ("LinearRegression", LinearRegression())
+                ]
+                score_metric = "r2_score" # maximize r2
+
+            for name, clf in candidates:
+                 # Create pipeline
+                model_pipeline = Pipeline(steps=[('preprocessor', preprocessor),
+                                                 ('model', clf)])
+
+                model_pipeline.fit(X_train, y_train)
+                preds = model_pipeline.predict(X_test)
+
+                if task_type == "classification":
+                     score = f1_score(y_test, preds, average='weighted', zero_division=0)
+                     current_metrics = {
+                        "accuracy": accuracy_score(y_test, preds),
+                        "precision": precision_score(y_test, preds, average='weighted', zero_division=0),
+                        "recall": recall_score(y_test, preds, average='weighted', zero_division=0),
+                        "f1_score": score,
+                    }
+                else:
+                    score = r2_score(y_test, preds)
+                    current_metrics = {
+                        "mse": mean_squared_error(y_test, preds),
+                        "rmse": mean_squared_error(y_test, preds, squared=False),
+                        "mae": mean_absolute_error(y_test, preds),
+                        "r2_score": score
+                    }
+
+                if score > best_score:
+                    best_score = score
+                    best_model = clf
+                    best_pipeline = model_pipeline
+                    best_metrics = current_metrics
+
+            # Finalize best model
+            model = best_pipeline
+            metrics = best_metrics
+            # Save the best model
+            model_path = f"ml_models/model_{model_id}.joblib"
+            joblib.dump(model, model_path)
+
         else:
             if task_type in ["classification", "regression"]:
                 # Create a full pipeline
