@@ -88,6 +88,12 @@ def train_mamba_model_task(model_id: int, dataset_id: int, model_info: dict):
         if use_qlora:
             model_kwargs["load_in_4bit"] = True
 
+        # Check Flash Attention
+        if hw_info.get("supports_flash_attn"):
+             # Mamba has its own efficient kernels, but for general transformers models we'd set:
+             # model_kwargs["attn_implementation"] = "flash_attention_2"
+             pass
+
         model = MambaForCausalLM.from_pretrained(model_name, **model_kwargs)
 
         # Apply LoRA / DoRA if requested

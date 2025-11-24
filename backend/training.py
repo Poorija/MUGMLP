@@ -11,6 +11,8 @@ from .training_mamba import train_mamba_model_task
 from .training_dpo import train_dpo_task
 from .data_tools import generate_synthetic_data_task, llm_judge_task
 from .training_moe import train_moe_model_task
+from .training_orpo import train_orpo_task
+from .data_tools import generate_constitutional_data_task
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
@@ -65,10 +67,12 @@ TASK_REGISTRY = {
         "MoE": "mixture_of_experts"
     },
     "alignment": {
-        "DPO": "direct_preference_optimization"
+        "DPO": "direct_preference_optimization",
+        "ORPO": "odds_ratio_preference_optimization"
     },
     "data_generation": {
-        "SyntheticData": "synthetic_data_generation"
+        "SyntheticData": "synthetic_data_generation",
+        "ConstitutionalAI": "constitutional_ai_generation"
     },
     "evaluation": {
         "LLMJudge": "llm_as_a_judge"
@@ -219,10 +223,16 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
             train_mamba_model_task(model_id, dataset_id, model_info)
         return
     elif task_type == "alignment":
-        train_dpo_task(model_id, dataset_id, model_info)
+        if model_type == "ORPO":
+            train_orpo_task(model_id, dataset_id, model_info)
+        else:
+            train_dpo_task(model_id, dataset_id, model_info)
         return
     elif task_type == "data_generation":
-        generate_synthetic_data_task(model_id, dataset_id, model_info)
+        if model_type == "ConstitutionalAI":
+            generate_constitutional_data_task(model_id, dataset_id, model_info)
+        else:
+            generate_synthetic_data_task(model_id, dataset_id, model_info)
         return
     elif task_type == "evaluation":
         llm_judge_task(model_id, dataset_id, model_info)
