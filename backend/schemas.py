@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
+import json
 
 # --- User Schemas ---
 class UserBase(BaseModel):
@@ -63,6 +64,16 @@ class MLModel(MLModelBase):
     class Config:
         orm_mode = True
 
+    @field_validator('hyperparameters', 'evaluation_metrics', mode='before')
+    @classmethod
+    def parse_json(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return {}
+        return v
+
 # --- Token Schemas ---
 class Token(BaseModel):
     access_token: str
@@ -89,6 +100,14 @@ class Dataset(DatasetBase):
 
     class Config:
         orm_mode = True
+
+    @field_validator('file_metadata', mode='before')
+    @classmethod
+    def parse_metadata(cls, v):
+        # file_metadata is typed as str in Base, so we just return it.
+        # If the schema changes to expect a dict in the future,
+        # we can add parsing logic here similar to MLModel.
+        return v
 
 # --- Project Schemas ---
 class ProjectBase(BaseModel):
