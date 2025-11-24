@@ -9,6 +9,8 @@ from .websocket_manager import manager
 from .training_vision import train_vision_model_task
 from .training_mamba import train_mamba_model_task
 from .training_dpo import train_dpo_task
+from .data_tools import generate_synthetic_data_task, llm_judge_task
+from .training_moe import train_moe_model_task
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
@@ -59,10 +61,17 @@ TASK_REGISTRY = {
         "ViT": "vision_transformer"
     },
     "text_generation": {
-        "Mamba": "mamba_ssm"
+        "Mamba": "mamba_ssm",
+        "MoE": "mixture_of_experts"
     },
     "alignment": {
         "DPO": "direct_preference_optimization"
+    },
+    "data_generation": {
+        "SyntheticData": "synthetic_data_generation"
+    },
+    "evaluation": {
+        "LLMJudge": "llm_as_a_judge"
     },
     "clustering": {
         "KMeans": KMeans,
@@ -204,10 +213,19 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
         train_vision_model_task(model_id, dataset_id, model_info)
         return
     elif task_type == "text_generation":
-        train_mamba_model_task(model_id, dataset_id, model_info)
+        if model_type == "MoE":
+            train_moe_model_task(model_id, dataset_id, model_info)
+        else:
+            train_mamba_model_task(model_id, dataset_id, model_info)
         return
     elif task_type == "alignment":
         train_dpo_task(model_id, dataset_id, model_info)
+        return
+    elif task_type == "data_generation":
+        generate_synthetic_data_task(model_id, dataset_id, model_info)
+        return
+    elif task_type == "evaluation":
+        llm_judge_task(model_id, dataset_id, model_info)
         return
 
     db: Session = SessionLocal()

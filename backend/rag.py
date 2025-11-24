@@ -16,16 +16,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class RAGEngine:
-    # WARNING: This implementation is a Singleton and currently shares the index across all users.
-    # In a production multi-tenant environment, the index should be sharded by tenant/project ID.
     def __init__(self, index_path="rag_storage"):
         self.storage_path = index_path
         self.embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"
         self.encoder = None
-        self.faiss_index = None
-        self.documents = [] # List of {"content": str, "metadata": dict}
-        self.bm25 = None
-        self.graph = nx.Graph()
+        # Stores: {scope_id: {'faiss': index, 'docs': [], 'bm25': obj, 'graph': nx.Graph}}
+        self.stores = {}
+        self.dimension = 384
 
         if not os.path.exists(self.storage_path):
             os.makedirs(self.storage_path)
@@ -36,58 +33,87 @@ class RAGEngine:
         if not self.encoder:
             logger.info("Loading RAG Embedding Model...")
             self.encoder = SentenceTransformer(self.embedding_model_name)
-            if self.faiss_index is None:
-                # Use CPU for FAISS for broad compatibility
-                self.dimension = 384 # Dimension of all-MiniLM-L6-v2
-                self.faiss_index = faiss.IndexFlatL2(self.dimension)
+
+    def _get_store(self, scope_id: str):
+        if scope_id not in self.stores:
+            self.stores[scope_id] = {
+                'faiss': faiss.IndexFlatL2(self.dimension),
+                'docs': [],
+                'bm25': None,
+                'graph': nx.Graph()
+            }
+        return self.stores[scope_id]
 
     def _save_state(self):
-        # Save FAISS index
-        if self.faiss_index:
-            faiss.write_index(self.faiss_index, os.path.join(self.storage_path, "index.faiss"))
+        # We save each scope in a subdirectory
+        for scope_id, store in self.stores.items():
+            scope_dir = os.path.join(self.storage_path, str(scope_id))
+            if not os.path.exists(scope_dir):
+                os.makedirs(scope_dir)
 
-        # Save Metadata, Documents, Graph
-        state = {
-            "documents": self.documents,
-            "graph": nx.node_link_data(self.graph)
-        }
-        with open(os.path.join(self.storage_path, "state.pkl"), "wb") as f:
-            pickle.dump(state, f)
+            # Save FAISS
+            if store['faiss']:
+                faiss.write_index(store['faiss'], os.path.join(scope_dir, "index.faiss"))
 
-        # Save BM25 (it's not easily serializable, but we can re-init it or pickle it if recursion limit permits)
-        # BM25Okapi is pickleable
-        if self.bm25:
-            with open(os.path.join(self.storage_path, "bm25.pkl"), "wb") as f:
-                pickle.dump(self.bm25, f)
+            # Save Metadata
+            state = {
+                "documents": store['docs'],
+                "graph": nx.node_link_data(store['graph'])
+            }
+            with open(os.path.join(scope_dir, "state.pkl"), "wb") as f:
+                pickle.dump(state, f)
+
+            # Save BM25
+            if store['bm25']:
+                with open(os.path.join(scope_dir, "bm25.pkl"), "wb") as f:
+                    pickle.dump(store['bm25'], f)
 
     def _load_state(self):
-        try:
-            # Load FAISS
-            index_file = os.path.join(self.storage_path, "index.faiss")
-            if os.path.exists(index_file):
-                self.faiss_index = faiss.read_index(index_file)
+        # Walk directories in storage_path
+        if not os.path.exists(self.storage_path):
+            return
 
-            # Load Metadata
-            state_file = os.path.join(self.storage_path, "state.pkl")
-            if os.path.exists(state_file):
-                with open(state_file, "rb") as f:
-                    state = pickle.load(f)
-                    self.documents = state.get("documents", [])
-                    if "graph" in state:
-                        self.graph = nx.node_link_graph(state["graph"])
+        for scope_id in os.listdir(self.storage_path):
+            scope_dir = os.path.join(self.storage_path, scope_id)
+            if not os.path.isdir(scope_dir):
+                continue
 
-            # Load BM25
-            bm25_file = os.path.join(self.storage_path, "bm25.pkl")
-            if os.path.exists(bm25_file):
-                with open(bm25_file, "rb") as f:
-                    self.bm25 = pickle.load(f)
+            try:
+                store = {
+                    'faiss': faiss.IndexFlatL2(self.dimension),
+                    'docs': [],
+                    'bm25': None,
+                    'graph': nx.Graph()
+                }
 
-        except Exception as e:
-            logger.error(f"Failed to load RAG state: {e}")
+                # Load FAISS
+                index_file = os.path.join(scope_dir, "index.faiss")
+                if os.path.exists(index_file):
+                    store['faiss'] = faiss.read_index(index_file)
 
-    def ingest_document(self, file_path: str, doc_id: str):
+                # Load Metadata
+                state_file = os.path.join(scope_dir, "state.pkl")
+                if os.path.exists(state_file):
+                    with open(state_file, "rb") as f:
+                        state = pickle.load(f)
+                        store['docs'] = state.get("documents", [])
+                        if "graph" in state:
+                            store['graph'] = nx.node_link_graph(state["graph"])
+
+                # Load BM25
+                bm25_file = os.path.join(scope_dir, "bm25.pkl")
+                if os.path.exists(bm25_file):
+                    with open(bm25_file, "rb") as f:
+                        store['bm25'] = pickle.load(f)
+
+                self.stores[scope_id] = store
+            except Exception as e:
+                logger.error(f"Failed to load RAG state for scope {scope_id}: {e}")
+
+    def ingest_document(self, file_path: str, doc_id: str, scope_id: str):
         """Parses and ingests a document (PDF or Text)."""
         self._initialize_models()
+        store = self._get_store(scope_id)
 
         text_content = ""
         if file_path.endswith(".pdf"):
@@ -108,20 +134,20 @@ class RAGEngine:
 
         # 1. Update Vectors
         embeddings = self.encoder.encode(chunks)
-        self.faiss_index.add(np.array(embeddings).astype("float32"))
+        store['faiss'].add(np.array(embeddings).astype("float32"))
 
         # 2. Update Storage
-        start_idx = len(self.documents)
+        start_idx = len(store['docs'])
         for i, chunk in enumerate(chunks):
-            self.documents.append({
+            store['docs'].append({
                 "content": chunk,
                 "source": doc_id,
                 "chunk_id": start_idx + i
             })
 
         # 3. Update BM25
-        tokenized_corpus = [doc["content"].split(" ") for doc in self.documents]
-        self.bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_corpus = [doc["content"].split(" ") for doc in store['docs']]
+        store['bm25'] = BM25Okapi(tokenized_corpus)
 
         # 4. Update Graph (Naive Entity Extraction)
         # Extract capitalized words as "entities" and link adjacent ones
@@ -129,32 +155,38 @@ class RAGEngine:
             words = chunk.split()
             entities = [w.strip(".,") for w in words if w[0].isupper() and len(w) > 2]
             for i in range(len(entities) - 1):
-                self.graph.add_edge(entities[i], entities[i+1], relation="adjacent")
+                store['graph'].add_edge(entities[i], entities[i+1], relation="adjacent")
 
         self._save_state()
         return len(chunks)
 
-    def hybrid_search(self, query: str, k=5) -> List[dict]:
+    def hybrid_search(self, query: str, scope_id: str, k=5) -> List[dict]:
         self._initialize_models()
+        store = self._get_store(scope_id)
+
+        if not store['docs']:
+            return []
 
         # 1. Dense Search (FAISS)
         q_emb = self.encoder.encode([query])
         # Retrieve slightly more for fusion (k*2)
-        D, I = self.faiss_index.search(np.array(q_emb).astype("float32"), k * 2)
+        D, I = store['faiss'].search(np.array(q_emb).astype("float32"), min(k * 2, len(store['docs'])))
         dense_hits = I[0] # List of indices
 
         # 2. Sparse Search (BM25)
-        tokenized_query = query.split(" ")
-        doc_scores = self.bm25.get_scores(tokenized_query)
-        # Get top k*2 indices
-        sparse_hits = np.argsort(doc_scores)[::-1][:k * 2]
+        sparse_hits = []
+        if store['bm25']:
+            tokenized_query = query.split(" ")
+            doc_scores = store['bm25'].get_scores(tokenized_query)
+            # Get top k*2 indices
+            sparse_hits = np.argsort(doc_scores)[::-1][:min(k * 2, len(store['docs']))]
 
         # 3. Reciprocal Rank Fusion (RRF)
         rrf_score = {}
 
         def add_rank_score(hits):
             for rank, doc_idx in enumerate(hits):
-                if doc_idx < 0 or doc_idx >= len(self.documents):
+                if doc_idx < 0 or doc_idx >= len(store['docs']):
                     continue
                 if doc_idx not in rrf_score:
                     rrf_score[doc_idx] = 0.0
@@ -168,27 +200,28 @@ class RAGEngine:
 
         results = []
         for doc_idx, score in sorted_docs[:k]:
-            results.append(self.documents[doc_idx])
+            results.append(store['docs'][doc_idx])
 
         return results
 
-    def graph_retrieval(self, query: str, depth=2) -> List[str]:
+    def graph_retrieval(self, query: str, scope_id: str, depth=2) -> List[str]:
         """Finds entities in query and retrieves graph neighbors."""
+        store = self._get_store(scope_id)
         query_entities = [w.strip(".,") for w in query.split() if w[0].isupper()]
         knowledge = []
 
         for entity in query_entities:
-            if entity in self.graph:
+            if entity in store['graph']:
                 # Get neighbors
-                neighbors = list(nx.single_source_shortest_path_length(self.graph, entity, cutoff=depth).keys())
+                neighbors = list(nx.single_source_shortest_path_length(store['graph'], entity, cutoff=depth).keys())
                 knowledge.append(f"Entity '{entity}' is related to: {', '.join(neighbors[:5])}")
 
         return knowledge
 
-    def query(self, query_text: str) -> dict:
+    def query(self, query_text: str, scope_id: str) -> dict:
         """Main interface for RAG."""
-        docs = self.hybrid_search(query_text)
-        graph_context = self.graph_retrieval(query_text)
+        docs = self.hybrid_search(query_text, scope_id)
+        graph_context = self.graph_retrieval(query_text, scope_id)
 
         context_str = "\n".join([d["content"] for d in docs])
         graph_str = "\n".join(graph_context)
