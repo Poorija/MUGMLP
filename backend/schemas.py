@@ -77,6 +77,7 @@ class TokenData(BaseModel):
 class DatasetBase(BaseModel):
     filename: str
     file_metadata: str # JSON string for simplicity
+    dataset_type: Optional[str] = "tabular"
 
 class DatasetCreate(DatasetBase):
     pass

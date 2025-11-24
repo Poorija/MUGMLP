@@ -46,6 +46,7 @@ class Dataset(Base):
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String)
     file_metadata = Column(Text) # Storing metadata as JSON string
+    dataset_type = Column(String, default="tabular") # tabular, image_folder, text_file
     created_at = Column(DateTime, default=datetime.utcnow)
     project_id = Column(Integer, ForeignKey("projects.id"))
 
