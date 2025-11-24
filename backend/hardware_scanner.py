@@ -40,6 +40,13 @@ class HardwareScanner:
                         "supports_flash_attn": props.major >= 8, # Ampere or newer
                         "supports_bf16": props.major >= 8
                     }
+                    # Check explicit library support
+                    try:
+                        import flash_attn
+                        gpu_info["flash_attn_installed"] = True
+                    except ImportError:
+                        gpu_info["flash_attn_installed"] = False
+
                     info["gpus"].append(gpu_info)
             except Exception as e:
                 logger.error(f"Error scanning GPU: {e}")

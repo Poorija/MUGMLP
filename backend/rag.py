@@ -5,7 +5,7 @@ import logging
 import asyncio
 from typing import List, Optional
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import faiss
 import numpy as np
 import networkx as nx
@@ -19,7 +19,9 @@ class RAGEngine:
     def __init__(self, index_path="rag_storage"):
         self.storage_path = index_path
         self.embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        self.reranker_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
         self.encoder = None
+        self.reranker = None
         # Stores: {scope_id: {'faiss': index, 'docs': [], 'bm25': obj, 'graph': nx.Graph}}
         self.stores = {}
         self.dimension = 384
@@ -33,6 +35,9 @@ class RAGEngine:
         if not self.encoder:
             logger.info("Loading RAG Embedding Model...")
             self.encoder = SentenceTransformer(self.embedding_model_name)
+        if not self.reranker:
+            logger.info("Loading RAG Reranker Model...")
+            self.reranker = CrossEncoder(self.reranker_model_name)
 
     def _get_store(self, scope_id: str):
         if scope_id not in self.stores:
@@ -169,8 +174,9 @@ class RAGEngine:
 
         # 1. Dense Search (FAISS)
         q_emb = self.encoder.encode([query])
-        # Retrieve slightly more for fusion (k*2)
-        D, I = store['faiss'].search(np.array(q_emb).astype("float32"), min(k * 2, len(store['docs'])))
+        # Retrieve extended candidate pool for reranking (k*3)
+        pool_size = min(k * 3, len(store['docs']))
+        D, I = store['faiss'].search(np.array(q_emb).astype("float32"), pool_size)
         dense_hits = I[0] # List of indices
 
         # 2. Sparse Search (BM25)
@@ -178,8 +184,8 @@ class RAGEngine:
         if store['bm25']:
             tokenized_query = query.split(" ")
             doc_scores = store['bm25'].get_scores(tokenized_query)
-            # Get top k*2 indices
-            sparse_hits = np.argsort(doc_scores)[::-1][:min(k * 2, len(store['docs']))]
+            # Get top k*3 indices
+            sparse_hits = np.argsort(doc_scores)[::-1][:pool_size]
 
         # 3. Reciprocal Rank Fusion (RRF)
         rrf_score = {}
@@ -195,12 +201,29 @@ class RAGEngine:
         add_rank_score(dense_hits)
         add_rank_score(sparse_hits)
 
-        # Sort by RRF score
+        # Sort by RRF score (Top candidates for reranking)
         sorted_docs = sorted(rrf_score.items(), key=lambda item: item[1], reverse=True)
 
+        # 4. Cross-Encoder Reranking
+        # Take top 2*k from fusion to rerank
+        rerank_candidates_indices = [idx for idx, score in sorted_docs[:k*2]]
+        rerank_inputs = []
+        for idx in rerank_candidates_indices:
+            rerank_inputs.append([query, store['docs'][idx]['content']])
+
+        if rerank_inputs:
+            scores = self.reranker.predict(rerank_inputs)
+            # Combine index and score
+            scored_candidates = list(zip(rerank_candidates_indices, scores))
+            # Sort by Cross-Encoder score
+            scored_candidates.sort(key=lambda x: x[1], reverse=True)
+            final_indices = [idx for idx, score in scored_candidates[:k]]
+        else:
+            final_indices = rerank_candidates_indices[:k]
+
         results = []
-        for doc_idx, score in sorted_docs[:k]:
-            results.append(store['docs'][doc_idx])
+        for idx in final_indices:
+            results.append(store['docs'][idx])
 
         return results
 

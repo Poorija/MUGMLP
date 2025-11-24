@@ -150,11 +150,17 @@ def train_vision_model_task(model_id: int, dataset_id: int, model_info: dict):
         # Basic check for QLoRA eligibility (though mostly used for LLMs, some PEFT configs allow it)
         # Here we keep standard loading for ViT as 4-bit ViT is less common/stable in standard HF pipelines
 
+        model_kwargs = {}
+        if hw_info.get("supports_flash_attn"):
+            # ViT in recent Transformers supports FA2
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+
         model = ViTForImageClassification.from_pretrained(
             model_name,
             num_labels=len(label_names),
             id2label=id2label,
-            label2id=label2id
+            label2id=label2id,
+            **model_kwargs
         )
 
         # Apply LoRA / DoRA if requested

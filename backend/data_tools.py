@@ -93,6 +93,75 @@ User: """
     finally:
         db.close()
 
+def generate_constitutional_data_task(model_id: int, dataset_id: int, model_info: dict):
+    """
+    Generates data using Constitutional AI principles (Critique -> Revise).
+    """
+    db: Session = SessionLocal()
+    try:
+        crud.update_model_status(db, model_id, "running")
+
+        hyperparams = model_info.get('hyperparameters', {})
+        constitution = hyperparams.get("constitution", "The response must be helpful, harmless, and honest.")
+        count = int(hyperparams.get("count", 5))
+        topic = hyperparams.get("topic", "AI Ethics")
+
+        tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL)
+        model = AutoModelForCausalLM.from_pretrained(DEFAULT_MODEL)
+        if torch.cuda.is_available():
+            model = model.cuda()
+
+        generated_data = []
+
+        for i in range(count):
+            # 1. Generate Initial
+            prompt = f"User: Write a response about {topic}. Assistant:"
+            inputs = tokenizer(prompt, return_tensors="pt")
+            if torch.cuda.is_available(): inputs = inputs.to("cuda")
+            out = model.generate(**inputs, max_new_tokens=50)
+            initial_response = tokenizer.decode(out[0], skip_special_tokens=True).split("Assistant:")[-1].strip()
+
+            # 2. Critique
+            critique_prompt = f"Constitution: {constitution}\nResponse: {initial_response}\nCritique the response based on the constitution:"
+            inputs = tokenizer(critique_prompt, return_tensors="pt")
+            if torch.cuda.is_available(): inputs = inputs.to("cuda")
+            out = model.generate(**inputs, max_new_tokens=50)
+            critique = tokenizer.decode(out[0], skip_special_tokens=True).split("Critique:")[-1].strip()
+
+            # 3. Revise
+            revise_prompt = f"Original Response: {initial_response}\nCritique: {critique}\nRevised Response:"
+            inputs = tokenizer(revise_prompt, return_tensors="pt")
+            if torch.cuda.is_available(): inputs = inputs.to("cuda")
+            out = model.generate(**inputs, max_new_tokens=50)
+            revised_response = tokenizer.decode(out[0], skip_special_tokens=True).split("Revised Response:")[-1].strip()
+
+            generated_data.append({
+                "prompt": prompt,
+                "initial": initial_response,
+                "critique": critique,
+                "revised": revised_response
+            })
+
+            if i % 2 == 0:
+                asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "running", "progress": f"{i}/{count}"})))
+
+        # Save
+        filename = f"constitutional_data_{model_id}.jsonl"
+        filepath = f"uploads/{filename}"
+        with open(filepath, "w") as f:
+            for entry in generated_data:
+                f.write(json.dumps(entry) + "\n")
+
+        metrics = {"count": count, "output_file": filename}
+        crud.update_model_status(db, model_id, "completed", metrics=metrics, model_path=filepath)
+        asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "completed", "metrics": metrics})))
+
+    except Exception as e:
+        crud.update_model_status(db, model_id, "failed")
+        asyncio.run(manager.broadcast(json.dumps({"model_id": model_id, "status": "failed", "error": str(e)})))
+    finally:
+        db.close()
+
 def llm_judge_task(model_id: int, dataset_id: int, model_info: dict):
     """
     Evaluates a dataset using an LLM as a Judge.
