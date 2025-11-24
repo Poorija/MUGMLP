@@ -17,6 +17,7 @@ from torchvision.transforms import (
     Compose, Normalize, RandomResizedCrop, ColorJitter, ToTensor, Resize, CenterCrop
 )
 from PIL import Image as PILImage
+from peft import get_peft_model, LoraConfig, TaskType
 
 # --- Vision Training Task ---
 
@@ -153,8 +154,21 @@ def train_vision_model_task(model_id: int, dataset_id: int, model_info: dict):
             label2id=label2id
         )
 
-        # Training Args
+        # Apply LoRA / DoRA if requested
         hyperparams = model_info.get('hyperparameters', {})
+        if hyperparams.get("use_lora"):
+            peft_config = LoraConfig(
+                task_type=TaskType.IMAGE_CLASSIF,
+                inference_mode=False,
+                r=16,
+                lora_alpha=32,
+                lora_dropout=0.1,
+                target_modules=["query", "value"], # Standard for ViT
+                use_dora=hyperparams.get("use_dora", False) # Support DoRA
+            )
+            model = get_peft_model(model, peft_config)
+            # Log trainable params
+            model.print_trainable_parameters()
         epochs = int(hyperparams.get('epochs', 3))
         batch_size = int(hyperparams.get('batch_size', 8))
         lr = float(hyperparams.get('learning_rate', 2e-5))

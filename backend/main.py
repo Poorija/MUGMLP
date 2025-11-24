@@ -15,6 +15,7 @@ from . import captcha_handler, visualizations
 from .websocket_manager import manager
 from . import activity
 from .hardware_scanner import scanner
+from .rag import rag_engine
 import joblib
 import pyotp
 import torch
@@ -300,6 +301,43 @@ async def upload_dataset(
         dataset_type=dataset_type
     )
     return crud.create_dataset(db=db, dataset=dataset, project_id=project_id)
+
+# --- RAG Endpoints ---
+@app.post("/rag/ingest")
+def ingest_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: schemas.User = Depends(get_current_user)
+):
+    # Save file temporarily
+    file_location = f"uploads/temp_rag_{file.filename}"
+    with open(file_location, "wb+") as file_object:
+        file_object.write(file.file.read())
+
+    try:
+        # Ingest into RAG engine
+        num_chunks = rag_engine.ingest_document(file_location, doc_id=file.filename)
+        return {"message": "Document ingested successfully", "chunks": num_chunks}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+    finally:
+        if os.path.exists(file_location):
+            os.remove(file_location)
+
+@app.post("/rag/query")
+def query_rag(
+    query: dict, # {"text": "..."}
+    current_user: schemas.User = Depends(get_current_user)
+):
+    text = query.get("text")
+    if not text:
+        raise HTTPException(status_code=400, detail="Query text is required")
+
+    try:
+        result = rag_engine.query(text)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG query failed: {e}")
 
 def get_and_verify_dataset(dataset_id: int, db: Session, current_user: schemas.User) -> models.Dataset:
     dataset = crud.get_dataset(db, dataset_id=dataset_id)

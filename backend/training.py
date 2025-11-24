@@ -8,6 +8,7 @@ from . import crud
 from .websocket_manager import manager
 from .training_vision import train_vision_model_task
 from .training_mamba import train_mamba_model_task
+from .training_dpo import train_dpo_task
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
@@ -59,6 +60,9 @@ TASK_REGISTRY = {
     },
     "text_generation": {
         "Mamba": "mamba_ssm"
+    },
+    "alignment": {
+        "DPO": "direct_preference_optimization"
     },
     "clustering": {
         "KMeans": KMeans,
@@ -201,6 +205,9 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
         return
     elif task_type == "text_generation":
         train_mamba_model_task(model_id, dataset_id, model_info)
+        return
+    elif task_type == "alignment":
+        train_dpo_task(model_id, dataset_id, model_info)
         return
 
     db: Session = SessionLocal()
