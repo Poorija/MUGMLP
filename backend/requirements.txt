@@ -29,3 +29,8 @@ faiss-cpu
 rank_bm25
 pypdf
 trl
+pytest
+pytest-cov
+httpx
+pytest-asyncio
+pytest-mock

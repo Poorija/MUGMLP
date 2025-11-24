@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect, Header
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import pandas as pd
 import json
 import os
@@ -67,11 +67,12 @@ def login_for_access_token(
     # We can check captcha separately if passed in headers, or we might need a custom login endpoint.
     # For now, let's assume specific headers for captcha if provided, or skip for basic auth flow?
     # The prompt asked to ADD captcha for login.
-    captcha_session_id: str = Depends(lambda x: x.headers.get("X-Captcha-Session-Id")),
-    captcha_text: str = Depends(lambda x: x.headers.get("X-Captcha-Text")),
-    otp_code: str = Depends(lambda x: x.headers.get("X-OTP-Code"))
+    captcha_session_id: Optional[str] = Header(None, alias="X-Captcha-Session-Id"),
+    captcha_text: Optional[str] = Header(None, alias="X-Captcha-Text"),
+    otp_code: Optional[str] = Header(None, alias="X-OTP-Code")
 ):
     # 1. Verify Captcha
+    # Since we made headers optional to fix the dependency injection, we must check them manually
     if not captcha_session_id or not captcha_text or not captcha_handler.verify_captcha(captcha_session_id, captcha_text):
         raise HTTPException(status_code=400, detail="Invalid or missing captcha")
 
