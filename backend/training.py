@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal
 from . import crud
 from .websocket_manager import manager
+from .training_vision import train_vision_model_task
+from .training_mamba import train_mamba_model_task
 
 # Scikit-learn & XGBoost
 from sklearn.model_selection import train_test_split
@@ -51,6 +53,12 @@ TASK_REGISTRY = {
         "SVR": SVR,
         "SimpleNN": "pytorch",
         "Auto": "auto", # Special key for AutoML
+    },
+    "image_classification": {
+        "ViT": "vision_transformer"
+    },
+    "text_generation": {
+        "Mamba": "mamba_ssm"
     },
     "clustering": {
         "KMeans": KMeans,
@@ -185,6 +193,16 @@ def train_pytorch_model(df, target_column, model_params, model_id, task_type="cl
 # --- Main Training Task ---
 
 def train_model_task(model_id: int, dataset_id: int, model_info: dict):
+    task_type = model_info.get('task_type')
+
+    # Redirect to specialized training tasks
+    if task_type == "image_classification":
+        train_vision_model_task(model_id, dataset_id, model_info)
+        return
+    elif task_type == "text_generation":
+        train_mamba_model_task(model_id, dataset_id, model_info)
+        return
+
     db: Session = SessionLocal()
     try:
         crud.update_model_status(db, model_id, "running")
@@ -194,10 +212,15 @@ def train_model_task(model_id: int, dataset_id: int, model_info: dict):
 
         dataset = crud.get_dataset(db, dataset_id)
         file_location = f"uploads/{dataset.filename}"
-        df = pd.read_csv(file_location) if dataset.filename.endswith('.csv') else pd.read_excel(file_location)
+
+        # Basic check for tabular vs non-tabular
+        if task_type not in ["image_classification", "text_generation"]:
+             if dataset.dataset_type != "tabular":
+                 raise ValueError(f"Task type '{task_type}' requires a tabular dataset, but got '{dataset.dataset_type}'.")
+             df = pd.read_csv(file_location) if dataset.filename.endswith('.csv') else pd.read_excel(file_location)
 
         model_type = model_info.get('model_type')
-        task_type = model_info.get('task_type') # e.g., 'classification', 'clustering', 'regression'
+        # task_type already retrieved
         hyperparams = model_info.get('hyperparameters', {})
         target_column = model_info.get('target_column')
 

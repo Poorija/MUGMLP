@@ -14,6 +14,7 @@ from .training import train_model_task, SimpleNN
 from . import captcha_handler, visualizations
 from .websocket_manager import manager
 from . import activity
+from .hardware_scanner import scanner
 import joblib
 import pyotp
 import torch
@@ -246,6 +247,7 @@ def read_project_datasets(
 @app.post("/projects/{project_id}/datasets/", response_model=schemas.Dataset)
 async def upload_dataset(
     project_id: int,
+    dataset_type: str = "tabular", # Default to tabular
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: schemas.User = Depends(get_current_user)
@@ -259,24 +261,44 @@ async def upload_dataset(
         file_object.write(file.file.read())
 
     try:
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(file_location)
-        elif file.filename.endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(file_location)
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file format")
-
         metadata = {
-            "columns": list(df.columns),
-            "rows": len(df),
             "file_size": os.path.getsize(file_location),
+            "original_filename": file.filename
         }
+
+        if dataset_type == "tabular":
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(file_location)
+            elif file.filename.endswith(('.xls', '.xlsx')):
+                df = pd.read_excel(file_location)
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported file format for tabular data")
+
+            metadata["columns"] = list(df.columns)
+            metadata["rows"] = len(df)
+
+        elif dataset_type == "image_folder":
+            if not file.filename.endswith('.zip'):
+                raise HTTPException(status_code=400, detail="Image datasets must be uploaded as .zip files")
+            # We don't extract here yet, just verify it's a zip
+            import zipfile
+            if not zipfile.is_zipfile(file_location):
+                raise HTTPException(status_code=400, detail="Invalid zip file")
+
+        elif dataset_type == "text_file":
+            if not file.filename.endswith(('.txt', '.jsonl')):
+                raise HTTPException(status_code=400, detail="Text datasets must be .txt or .jsonl")
+
         metadata_str = json.dumps(metadata)
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing file: {e}")
 
-    dataset = schemas.DatasetCreate(filename=file.filename, file_metadata=metadata_str)
+    dataset = schemas.DatasetCreate(
+        filename=file.filename,
+        file_metadata=metadata_str,
+        dataset_type=dataset_type
+    )
     return crud.create_dataset(db=db, dataset=dataset, project_id=project_id)
 
 def get_and_verify_dataset(dataset_id: int, db: Session, current_user: schemas.User) -> models.Dataset:
