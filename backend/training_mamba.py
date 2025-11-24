@@ -11,6 +11,7 @@ from .hardware_scanner import scanner
 # Transformers
 from transformers import AutoTokenizer, MambaForCausalLM, TrainingArguments, Trainer
 from datasets import load_dataset
+from peft import get_peft_model, LoraConfig, TaskType
 
 def train_mamba_model_task(model_id: int, dataset_id: int, model_info: dict):
     db: Session = SessionLocal()
@@ -73,8 +74,23 @@ def train_mamba_model_task(model_id: int, dataset_id: int, model_info: dict):
 
         model = MambaForCausalLM.from_pretrained(model_name)
 
-        # Training Args
+        # Apply LoRA / DoRA if requested
         hyperparams = model_info.get('hyperparameters', {})
+        if hyperparams.get("use_lora"):
+             # Mamba might not be natively supported by PEFT auto mapping yet in older versions,
+             # but we can target modules manually.
+             # Typical Mamba linear layers: "in_proj", "out_proj", "x_proj", "dt_proj"
+            peft_config = LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                inference_mode=False,
+                r=8,
+                lora_alpha=32,
+                lora_dropout=0.1,
+                target_modules=["in_proj", "out_proj"], # Common targets for SSM
+                use_dora=hyperparams.get("use_dora", False) # Support DoRA
+            )
+            model = get_peft_model(model, peft_config)
+            model.print_trainable_parameters()
         epochs = int(hyperparams.get('epochs', 3))
         batch_size = int(hyperparams.get('batch_size', 4))
         lr = float(hyperparams.get('learning_rate', 2e-4))

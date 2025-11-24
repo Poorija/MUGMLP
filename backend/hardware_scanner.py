@@ -83,7 +83,10 @@ class HardwareScanner:
         if self.system_info["ram_available_gb"] < requirements["min_ram_gb"]:
             msg = f"Low System RAM: {self.system_info['ram_available_gb']}GB available, {requirements['min_ram_gb']}GB recommended."
             result["warnings"].append(msg)
-            # We don't block strictly on RAM as swap exists, but it's a strong warning
+            # Critical warning for RAG
+            if requirements.get("strict_ram"):
+                result["feasible"] = False
+                result["errors"].append(msg)
 
         # Check GPU
         if requirements["requires_gpu"] and not self.system_info["gpu_available"]:

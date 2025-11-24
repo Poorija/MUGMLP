@@ -21,6 +21,11 @@ timm
 peft
 psutil
 pillow
-# bitsandbytes # Uncomment if on Linux/WSL for 4-bit loading
-# mamba-ssm # Uncomment if on Linux + NVIDIA GPU
-# flash-attn # Uncomment if on Linux + NVIDIA Ampere GPU
+# bitsandbytes
+# mamba-ssm
+# flash-attn
+sentence-transformers
+faiss-cpu
+rank_bm25
+pypdf
+trl
