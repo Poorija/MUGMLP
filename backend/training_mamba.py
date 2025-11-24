@@ -13,6 +13,13 @@ from transformers import AutoTokenizer, MambaForCausalLM, TrainingArguments, Tra
 from datasets import load_dataset
 from peft import get_peft_model, LoraConfig, TaskType
 
+# Check for bitsandbytes
+try:
+    import bitsandbytes
+    HAS_BNB = True
+except ImportError:
+    HAS_BNB = False
+
 def train_mamba_model_task(model_id: int, dataset_id: int, model_info: dict):
     db: Session = SessionLocal()
     try:
@@ -72,11 +79,20 @@ def train_mamba_model_task(model_id: int, dataset_id: int, model_info: dict):
         use_cuda = torch.cuda.is_available()
         # If no GPU, Mamba via HF uses a slow naive implementation.
 
-        model = MambaForCausalLM.from_pretrained(model_name)
+        # Load args
+        hyperparams = model_info.get('hyperparameters', {})
+        use_qlora = hyperparams.get("use_qlora", False) and HAS_BNB
+
+        # Load Model
+        model_kwargs = {}
+        if use_qlora:
+            model_kwargs["load_in_4bit"] = True
+
+        model = MambaForCausalLM.from_pretrained(model_name, **model_kwargs)
 
         # Apply LoRA / DoRA if requested
-        hyperparams = model_info.get('hyperparameters', {})
         if hyperparams.get("use_lora"):
+
              # Mamba might not be natively supported by PEFT auto mapping yet in older versions,
              # but we can target modules manually.
              # Typical Mamba linear layers: "in_proj", "out_proj", "x_proj", "dt_proj"

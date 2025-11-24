@@ -316,7 +316,8 @@ def ingest_document(
 
     try:
         # Ingest into RAG engine
-        num_chunks = rag_engine.ingest_document(file_location, doc_id=file.filename)
+        # Use user ID as scope for now (simple tenant isolation)
+        num_chunks = rag_engine.ingest_document(file_location, doc_id=file.filename, scope_id=str(current_user.id))
         return {"message": "Document ingested successfully", "chunks": num_chunks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
@@ -334,7 +335,7 @@ def query_rag(
         raise HTTPException(status_code=400, detail="Query text is required")
 
     try:
-        result = rag_engine.query(text)
+        result = rag_engine.query(text, scope_id=str(current_user.id))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG query failed: {e}")

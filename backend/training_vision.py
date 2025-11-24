@@ -147,6 +147,9 @@ def train_vision_model_task(model_id: int, dataset_id: int, model_info: dict):
         id2label = {i: label for i, label in enumerate(label_names)}
         label2id = {label: i for i, label in enumerate(label_names)}
 
+        # Basic check for QLoRA eligibility (though mostly used for LLMs, some PEFT configs allow it)
+        # Here we keep standard loading for ViT as 4-bit ViT is less common/stable in standard HF pipelines
+
         model = ViTForImageClassification.from_pretrained(
             model_name,
             num_labels=len(label_names),
