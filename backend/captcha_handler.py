@@ -19,9 +19,8 @@ def generate_captcha():
     captcha_store[session_id] = captcha_text
 
     # Generate image data
-    data = image.generate(captcha_text)
-    image_bytes = io.BytesIO()
-    data.save(image_bytes, format='PNG')
+    # image.generate returns a BytesIO object directly
+    image_bytes = image.generate(captcha_text)
     image_bytes.seek(0)
 
     return session_id, image_bytes
