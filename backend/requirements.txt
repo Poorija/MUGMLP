@@ -12,6 +12,7 @@ scikit-learn
 torch
 torchvision
 captcha
+Pillow>=9.0.0
 xgboost
 matplotlib
 seaborn
@@ -21,7 +22,6 @@ datasets
 timm
 peft
 psutil
-pillow
 # bitsandbytes
 # mamba-ssm
 # flash-attn
