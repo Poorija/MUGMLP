@@ -35,3 +35,4 @@ pytest-cov
 httpx
 pytest-asyncio
 pytest-mock
+pyotp
