@@ -8,15 +8,15 @@ import os
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import models, schemas, crud, security
-from .database import engine, get_db
-from .dependencies import get_current_user, get_current_superuser
-from .training import train_model_task, SimpleNN
-from . import captcha_handler, visualizations
-from .websocket_manager import manager
-from . import activity
-from .hardware_scanner import scanner
-from .rag import rag_engine
+import models, schemas, crud, security
+from database import engine, get_db
+from dependencies import get_current_user, get_current_superuser
+from training import train_model_task, SimpleNN
+import captcha_handler, visualizations
+from websocket_manager import manager
+import activity
+from hardware_scanner import scanner
+from rag import rag_engine
 import joblib
 import pyotp
 import torch
