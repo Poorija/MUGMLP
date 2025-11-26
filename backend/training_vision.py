@@ -5,10 +5,10 @@ import time
 import zipfile
 import asyncio
 from sqlalchemy.orm import Session
-from .database import SessionLocal
-from . import crud
-from .websocket_manager import manager
-from .hardware_scanner import scanner
+from database import SessionLocal
+import crud
+from websocket_manager import manager
+from hardware_scanner import scanner
 
 # Transformers / Torch
 from transformers import ViTForImageClassification, ViTImageProcessor, Trainer, TrainingArguments
