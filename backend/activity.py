@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from . import models, schemas
+import models, schemas
 import json
 
 def create_activity_log(db: Session, user_id: int, action: str, details: str = None):
