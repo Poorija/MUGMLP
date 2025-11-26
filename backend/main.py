@@ -96,4 +96,29 @@ def login_for_access_token(
         "require_2fa": bool(user.otp_secret)
     }
 
-# سایر endpointها مثل قبل باقی‌می‌ماند ...
+
+# --- User Registration Endpoint ---
+@app.post("/users/", response_model=schemas.User)
+def create_user(
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db)
+):
+    # Verify captcha
+    if not captcha_handler.verify_captcha(user.captcha_session_id, user.captcha_text):
+        raise HTTPException(status_code=400, detail="Invalid captcha")
+    
+    # Check if user exists
+    db_user = crud.get_user_by_email(db, email=user.email)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Validate password strength
+    if not security.validate_password_strength(user.password):
+        raise HTTPException(status_code=400, detail="Password does not meet requirements")
+    
+    return crud.create_user(db=db, user=user)
+
+# --- User Profile Endpoints ---
+@app.get("/users/me", response_model=schemas.User)
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
